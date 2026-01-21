@@ -1,0 +1,569 @@
+{
+  "name": "Email Organization Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MAIL_OPERATOR_URL }}/webhook/mail-operator",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "operation",
+              "value": "get_unprocessed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-get-unprocessed",
+      "name": "Get Unprocessed Emails",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [450, 300],
+      "notes": "Call Apple Mail Operator to get emails"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $json.data && $json.data.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-emails-exist",
+      "name": "Check Emails Exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "id": "split-emails",
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [850, 200],
+      "notes": "Process each email individually"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "classification-prompt",
+              "name": "classification_prompt",
+              "value": "=You are an email classifier for Josh Davis, Field CTO at Expedient.\n\n**Key People Context:**\n- Managers: Rob McCafferty, Brent Meadows (HIGHEST PRIORITY)\n- Direct Reports: Patrick Rosenberger, David Determan, Keith Cadieux\n- Key Collaborators: Anthony Jackman, Jeff Fertitta, David Saliba, Jacob Figueroa, Duane Weber, Bob Carter, Kate Rance\n\n**Role:** Field CTO responsible for pre-sales engineering, process, sales enablement, sales overlay\n\n**Email to Classify:**\nSubject: {{ $json.subject }}\nFrom: {{ $json.sender }}\nTo: {{ $json.to_recipients }}\nCC: {{ $json.cc_recipients }}\nBody Preview: {{ $json.body_preview }}\n\n**Your Task:**\nAnalyze this email and provide classification in the following JSON format:\n\n```json\n{\n  \"folder\": \"Inbox\" | \"Active Projects\" | \"Auto-Archive\" | \"Deleted Items\",\n  \"priority\": \"high\" | \"medium\" | \"low\",\n  \"labels\": [\"@Manager\", \"@DirectReport\", \"@Client\", \"@ActionNeeded\", \"@MeetingPrep\", \"@Technical\"],\n  \"should_flag\": true | false,\n  \"should_create_task\": true | false,\n  \"task_details\": {\n    \"title\": \"string\",\n    \"description\": \"string\",\n    \"due_date\": \"YYYY-MM-DD\" | \"tomorrow\" | \"in_2_days\",\n    \"priority\": \"high\" | \"medium\" | \"low\"\n  },\n  \"reasoning\": \"Brief explanation of classification\"\n}\n```\n\n**Classification Rules:**\n1. From managers (Rob/Brent) → Inbox, high priority, flag, likely create task\n2. Action requests → Inbox, check sender for priority\n3. Meeting responses (Accepted:/Declined:) → Auto-Archive\n4. Automated reports → Auto-Archive or Delete\n5. Newsletters/promos → Delete\n6. Client-facing work → Active Projects\n\nRespond ONLY with the JSON, no other text.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "build-llm-prompt",
+      "name": "Build Classification Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.classification_prompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 1000
+        }
+      },
+      "id": "llm-classify",
+      "name": "LLM - Classify Email",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1250, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "your-anthropic-credential-id",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM response and merge with email data\nconst llmResponse = $input.first().json.response;\nconst emailData = $input.first().json;\n\ntry {\n  // Extract JSON from LLM response (might be wrapped in markdown)\n  let jsonText = llmResponse;\n  const jsonMatch = llmResponse.match(/```json\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) {\n    jsonText = jsonMatch[1];\n  }\n  \n  const classification = JSON.parse(jsonText);\n  \n  return [{\n    json: {\n      ...emailData,\n      classification: classification\n    }\n  }];\n} catch (error) {\n  // Fallback to safe defaults if parsing fails\n  return [{\n    json: {\n      ...emailData,\n      classification: {\n        folder: 'Review',\n        priority: 'medium',\n        labels: [],\n        should_flag: false,\n        should_create_task: false,\n        reasoning: 'Failed to parse LLM response: ' + error.message\n      }\n    }\n  }];\n}"
+      },
+      "id": "parse-classification",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MAIL_OPERATOR_URL }}/webhook/mail-operator",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "operation",
+              "value": "move_email"
+            },
+            {
+              "name": "message_id",
+              "value": "={{ $json.message_id }}"
+            },
+            {
+              "name": "folder",
+              "value": "={{ $json.classification.folder }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "move-email",
+      "name": "Move Email to Folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.classification.should_flag }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-should-flag",
+      "name": "Should Flag?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MAIL_OPERATOR_URL }}/webhook/mail-operator",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "operation",
+              "value": "flag_email"
+            },
+            {
+              "name": "message_id",
+              "value": "={{ $json.message_id }}"
+            },
+            {
+              "name": "flag_status",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "flag-email",
+      "name": "Flag Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2050, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.classification.should_create_task }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-should-create-task",
+      "name": "Should Create Task?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2050, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "task-content",
+              "name": "task_content",
+              "value": "={{ $json.classification.task_details.title }}",
+              "type": "string"
+            },
+            {
+              "id": "task-description",
+              "name": "task_description",
+              "value": "=From: {{ $json.sender }}\\nSubject: {{ $json.subject }}\\n\\n{{ $json.classification.task_details.description }}\\n\\n---\\nEmail Preview:\\n{{ $json.body_preview.substring(0, 200) }}",
+              "type": "string"
+            },
+            {
+              "id": "task-priority",
+              "name": "task_priority",
+              "value": "={{ $json.classification.task_details.priority === 'high' ? 4 : ($json.classification.task_details.priority === 'medium' ? 3 : 2) }}",
+              "type": "number"
+            },
+            {
+              "id": "task-due",
+              "name": "task_due_string",
+              "value": "={{ $json.classification.task_details.due_date }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-todoist-task",
+      "name": "Prepare Todoist Task",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2250, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.TODOIST_WORKFLOW_URL }}",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ $json.task_content }}"
+            },
+            {
+              "name": "description",
+              "value": "={{ $json.task_description }}"
+            },
+            {
+              "name": "priority",
+              "value": "={{ $json.task_priority }}"
+            },
+            {
+              "name": "due_string",
+              "value": "={{ $json.task_due_string }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-todoist-task",
+      "name": "Create Todoist Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2450, 400],
+      "notes": "Calls your existing Todoist workflow"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MAIL_OPERATOR_URL }}/webhook/mail-operator",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "operation",
+              "value": "mark_read"
+            },
+            {
+              "name": "message_id",
+              "value": "={{ $json.message_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mark-as-read",
+      "name": "Mark as Read",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2650, 200],
+      "notes": "Mark processed emails as read"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "processing-complete",
+              "name": "status",
+              "value": "processed",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "processed_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-completion",
+      "name": "Log Completion",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2850, 200]
+    },
+    {
+      "parameters": {},
+      "id": "no-emails",
+      "name": "No Emails to Process",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [850, 400],
+      "notes": "Exit gracefully when no emails"
+    }
+  ],
+  "connections": {
+    "Schedule Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get Unprocessed Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unprocessed Emails": {
+      "main": [
+        [
+          {
+            "node": "Check Emails Exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Emails Exist": {
+      "main": [
+        [
+          {
+            "node": "Split Into Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Emails to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Items": {
+      "main": [
+        [
+          {
+            "node": "Build Classification Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Classification Prompt": {
+      "main": [
+        [
+          {
+            "node": "LLM - Classify Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - Classify Email": {
+      "main": [
+        [
+          {
+            "node": "Parse Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          {
+            "node": "Move Email to Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Email to Folder": {
+      "main": [
+        [
+          {
+            "node": "Should Flag?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Flag?": {
+      "main": [
+        [
+          {
+            "node": "Flag Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Should Create Task?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Email": {
+      "main": [
+        [
+          {
+            "node": "Should Create Task?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Create Task?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Todoist Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Todoist Task": {
+      "main": [
+        [
+          {
+            "node": "Create Todoist Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Todoist Task": {
+      "main": [
+        [
+          {
+            "node": "Mark as Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Read": {
+      "main": [
+        [
+          {
+            "node": "Log Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-03T00:00:00.000Z",
+  "versionId": "1"
+}

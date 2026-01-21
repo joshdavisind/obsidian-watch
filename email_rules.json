@@ -1,0 +1,366 @@
+{
+  "email_organization_rules": {
+    "version": "1.0",
+    "generated": "2025-11-03",
+    "user_context": {
+      "role": "Field CTO",
+      "company": "Expedient",
+      "responsibilities": ["pre-sales engineering", "process", "sales enablement", "sales overlay"],
+      "managers": ["Rob McCafferty", "Brent Meadows"],
+      "direct_reports": ["Patrick Rosenberger", "David Determan", "Keith Cadieux"],
+      "key_collaborators": [
+        "Anthony Jackman",
+        "Jeff Fertitta", 
+        "David Saliba",
+        "Jacob Figueroa",
+        "Duane Weber",
+        "Bob Carter",
+        "Kate Rance"
+      ]
+    },
+    "filing_rules": {
+      "priority_inbox": {
+        "description": "Keep in inbox - requires action",
+        "rules": [
+          {
+            "rule_id": "manager_emails",
+            "priority": 1,
+            "conditions": {
+              "from_contains": ["mccafferty", "meadows", "rob", "brent"]
+            },
+            "actions": {
+              "folder": "Inbox",
+              "flag": true,
+              "priority_level": "high",
+              "create_task": true
+            }
+          },
+          {
+            "rule_id": "action_requests",
+            "priority": 2,
+            "conditions": {
+              "subject_contains_any": [
+                "can you",
+                "could you", 
+                "please review",
+                "need",
+                "action required",
+                "asap",
+                "urgent",
+                "by friday",
+                "by monday"
+              ]
+            },
+            "actions": {
+              "folder": "Inbox",
+              "flag": true,
+              "priority_level": "high",
+              "create_task_if_from": ["jeff", "rob", "brent", "fertitta", "mccafferty", "meadows"]
+            }
+          },
+          {
+            "rule_id": "direct_reports_with_requests",
+            "priority": 3,
+            "conditions": {
+              "from_contains": ["rosenberger", "determan", "cadieux", "patrick", "david", "keith"],
+              "subject_contains_any": ["review", "feedback", "approval", "?", "question", "help"]
+            },
+            "actions": {
+              "folder": "Inbox",
+              "priority_level": "medium",
+              "labels": ["@DirectReport"],
+              "auto_archive_after_hours": 48
+            }
+          }
+        ]
+      },
+      "active_projects": {
+        "description": "Client-facing work and key collaborations",
+        "rules": [
+          {
+            "rule_id": "client_meetings",
+            "priority": 4,
+            "conditions": {
+              "subject_contains_any": ["prep", "debrief"],
+              "has_external_domain": true
+            },
+            "actions": {
+              "folder": "Active Projects",
+              "labels": ["@Client", "@MeetingPrep"],
+              "create_task": true,
+              "task_template": {
+                "title": "PREP: {meeting_subject}",
+                "due": "{meeting_date_minus_1_day}",
+                "priority": "medium"
+              }
+            }
+          },
+          {
+            "rule_id": "technical_work",
+            "priority": 5,
+            "conditions": {
+              "subject_contains_any": [
+                "sizing",
+                "architecture", 
+                "design",
+                "proposal",
+                "assessment",
+                "discovery",
+                "capacity",
+                "requirements",
+                "specifications",
+                "solution"
+              ]
+            },
+            "actions": {
+              "folder": "Active Projects",
+              "labels": ["@Technical"],
+              "create_task_if_from": ["rosenberger", "determan", "cadieux", "jackman", "fertitta"],
+              "auto_archive_after_hours": 72
+            }
+          },
+          {
+            "rule_id": "key_collaborators",
+            "priority": 6,
+            "conditions": {
+              "from_contains": ["jackman", "fertitta", "saliba", "figueroa", "weber", "carter", "rance", "anthony", "jeff", "jacob", "duane", "bob", "kate"],
+              "has_external_domain": true
+            },
+            "actions": {
+              "folder": "Active Projects",
+              "labels": ["@Client"],
+              "priority_level": "medium"
+            }
+          }
+        ]
+      },
+      "auto_archive": {
+        "description": "Automated reports and meeting responses - delete after 7 days",
+        "rules": [
+          {
+            "rule_id": "automated_reports",
+            "priority": 7,
+            "conditions": {
+              "subject_contains_any": [
+                "report",
+                "dashboard", 
+                "metrics",
+                "analytics",
+                "status",
+                "summary"
+              ],
+              "from_contains": ["noreply", "no-reply", "automated", "system"]
+            },
+            "actions": {
+              "folder": "Auto-Archive",
+              "delete_after_days": 7
+            }
+          },
+          {
+            "rule_id": "meeting_responses",
+            "priority": 8,
+            "conditions": {
+              "subject_starts_with_any": ["Accepted:", "Declined:", "Tentative:", "Canceled:"]
+            },
+            "actions": {
+              "folder": "Auto-Archive",
+              "delete_after_days": 1
+            }
+          }
+        ]
+      },
+      "spam_promotions": {
+        "description": "Delete immediately",
+        "rules": [
+          {
+            "rule_id": "newsletters_promos",
+            "priority": 9,
+            "conditions": {
+              "subject_contains_any": [
+                "newsletter",
+                "digest",
+                "weekly roundup",
+                "% off",
+                "sale",
+                "limited time",
+                "offer",
+                "deal",
+                "discount",
+                "promotion",
+                "unsubscribe"
+              ]
+            },
+            "actions": {
+              "folder": "Deleted Items",
+              "mark_spam": true
+            }
+          }
+        ]
+      }
+    },
+    "labeling_system": {
+      "labels": [
+        {
+          "label": "@Manager",
+          "description": "From Rob McCafferty or Brent Meadows",
+          "priority": "high"
+        },
+        {
+          "label": "@DirectReport",
+          "description": "From Patrick, David D., or Keith",
+          "priority": "medium"
+        },
+        {
+          "label": "@Client",
+          "description": "Contains external client communication",
+          "priority": "medium"
+        },
+        {
+          "label": "@ActionNeeded",
+          "description": "Requires response or action",
+          "priority": "high"
+        },
+        {
+          "label": "@MeetingPrep",
+          "description": "Needs preparation before meeting",
+          "priority": "medium"
+        },
+        {
+          "label": "@MeetingDebrief",
+          "description": "Follow-up after client meeting",
+          "priority": "medium"
+        },
+        {
+          "label": "@Technical",
+          "description": "Architecture, sizing, design work",
+          "priority": "medium"
+        }
+      ]
+    },
+    "task_creation_rules": {
+      "auto_create_conditions": [
+        {
+          "condition_id": "manager_requests",
+          "priority": 1,
+          "if": {
+            "from_contains": ["mccafferty", "meadows", "rob", "brent"],
+            "subject_contains_any": ["can you", "could you", "please", "need"]
+          },
+          "task": {
+            "project": "Leadership Requests",
+            "priority": "high",
+            "due_date_logic": "extract_or_tomorrow",
+            "title_template": "[ACTION] {extracted_action}",
+            "description_template": "From: {sender}\nSubject: {subject}\n\n{body_preview_200_chars}"
+          }
+        },
+        {
+          "condition_id": "jeff_requests",
+          "priority": 2,
+          "if": {
+            "from_contains": ["fertitta", "jeff"],
+            "subject_contains_any": ["can you", "could you", "please", "need", "action"]
+          },
+          "task": {
+            "project": "Cross-functional",
+            "priority": "high",
+            "due_date_logic": "extract_or_2_days"
+          }
+        },
+        {
+          "condition_id": "meeting_prep",
+          "priority": 3,
+          "if": {
+            "subject_contains": ["meeting", "call", "sync", "discussion"],
+            "has_external_attendees": true,
+            "not_starts_with": ["Accepted:", "Declined:", "Tentative:"]
+          },
+          "task": {
+            "project": "Meeting Prep",
+            "priority": "medium",
+            "due_date_logic": "meeting_date_minus_1_day",
+            "title_template": "PREP: {meeting_subject}",
+            "description_template": "Meeting: {meeting_time}\nAttendees: {attendee_list}\nPrepare: Review account context, technical requirements"
+          }
+        },
+        {
+          "condition_id": "meeting_debrief",
+          "priority": 4,
+          "if": {
+            "manually_triggered": true,
+            "or_subject_contains": ["follow-up", "action items", "next steps"]
+          },
+          "task": {
+            "project": "Meeting Debrief",
+            "priority": "medium",
+            "due_date_logic": "same_day",
+            "title_template": "DEBRIEF: {meeting_subject}",
+            "description_template": "Document outcomes, action items, and next steps"
+          }
+        }
+      ],
+      "deadline_extraction": {
+        "patterns": [
+          {"text": "by friday", "logic": "this_friday"},
+          {"text": "by monday", "logic": "next_monday"},
+          {"text": "by tomorrow", "logic": "tomorrow"},
+          {"text": "by eow", "logic": "end_of_week"},
+          {"text": "by eom", "logic": "end_of_month"},
+          {"text": "asap", "logic": "tomorrow"},
+          {"text": "urgent", "logic": "tomorrow"},
+          {"regex": "by ([0-9]{1,2}/[0-9]{1,2})", "logic": "extract_date"},
+          {"regex": "due ([a-zA-Z]+ [0-9]{1,2})", "logic": "extract_date"},
+          {"default": "2_days_from_email"}
+        ]
+      }
+    },
+    "priority_matrix": {
+      "high_priority_indicators": {
+        "senders": ["mccafferty", "meadows", "rob", "brent"],
+        "keywords": ["urgent", "asap", "action required", "critical"],
+        "combined": "from_manager OR urgent_keyword"
+      },
+      "medium_priority_indicators": {
+        "senders": ["rosenberger", "determan", "cadieux", "jackman", "fertitta"],
+        "keywords": ["review", "feedback", "question", "client"],
+        "conditions": "has_external_domain OR action_request"
+      },
+      "low_priority_indicators": {
+        "keywords": ["fyi", "update", "status"],
+        "conditions": "no_action_request AND internal_only"
+      }
+    },
+    "edge_cases": {
+      "conflict_resolution": {
+        "priority_order": [
+          "from_manager",
+          "action_request_with_client",
+          "direct_report_with_client",
+          "internal_no_action"
+        ],
+        "default_action": "keep_in_inbox_if_uncertain"
+      },
+      "uncertain_classification": {
+        "action": "move_to_review_folder",
+        "review_schedule": "weekly"
+      },
+      "never_auto_delete": {
+        "from_domains": ["expedient.com"],
+        "from_known_contacts": true,
+        "has_external_participants": true
+      }
+    },
+    "learning_memory": {
+      "track": [
+        "processed_email_ids",
+        "known_client_domains",
+        "manual_classification_corrections",
+        "false_positive_patterns"
+      ],
+      "improvement_triggers": {
+        "review_after_corrections": 10,
+        "adjust_rules_if_false_positive_rate": ">5%"
+      }
+    }
+  }
+}
