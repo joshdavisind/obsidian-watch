@@ -12,7 +12,7 @@
       "name": "Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [-1200, 300],
+      "position": [-1600, 300],
       "webhookId": "metis"
     },
     {
@@ -25,17 +25,69 @@
       "name": "Nightly Cron (2am)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
-      "position": [-1200, 500]
+      "position": [-1600, 500]
     },
     {
       "parameters": {
-        "jsCode": "const baseUrl = 'http://100.111.39.118:27123';\nconst authHeader = 'Bearer 4931ee13bc3472b907f251ce39d7b4229a4f7fc360c0ab8f52213329671a7b12';\n\nfunction encodePathPreservingSlashes(p) {\n  return p.split('/').filter(Boolean).map(encodeURIComponent).join('/');\n}\n\nasync function listDirectory(dirPath) {\n  const encoded = encodePathPreservingSlashes(dirPath);\n  const url = `${baseUrl}/vault/${encoded ? `${encoded}/` : ''}`;\n  const response = await this.helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: { Authorization: authHeader },\n    json: true,\n  });\n  return response?.files ?? [];\n}\n\nasync function findMarkdownFiles(startDir) {\n  const results = [];\n  const stack = [startDir];\n  while (stack.length) {\n    const dir = stack.pop();\n    const items = await listDirectory.call(this, dir);\n    for (const item of items) {\n      const isDirectory = item.endsWith('/');\n      const name = isDirectory ? item.slice(0, -1) : item;\n      const vaultPath = dir ? `${dir}/${name}` : name;\n      if (isDirectory) {\n        stack.push(vaultPath);\n        continue;\n      }\n      if (!name.endsWith('.md')) continue;\n      if (name === 'Dashboard.md') continue;\n      if (name.startsWith('Metis-Log-')) continue;\n      if (name.startsWith('Janitor-Log-')) continue;\n      if (name === 'Metis-Config.md') continue;\n      results.push(vaultPath);\n    }\n  }\n  return results;\n}\n\nconst files = await findMarkdownFiles.call(this, 'Work');\nconst limitedFiles = files.slice(0, 10);\n\nif (limitedFiles.length === 0) {\n  return [{ json: { vaultPath: '', skip: true } }];\n}\n\nreturn limitedFiles.map(vaultPath => ({ json: { vaultPath, skip: false } }));"
+        "url": "http://100.111.39.118:27123/vault/Work/Meta/Configuration/Metis-Config.md",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "read-config-note",
+      "name": "Read Config Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [-1400, 300],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const baseUrl = 'http://100.111.39.118:27123';\nconst authHeader = 'Bearer 4931ee13bc3472b907f251ce39d7b4229a4f7fc360c0ab8f52213329671a7b12';\n\nfunction encodePathPreservingSlashes(p) {\n  return p.split('/').filter(Boolean).map(encodeURIComponent).join('/');\n}\n\nasync function listDirectory(dirPath) {\n  const encoded = encodePathPreservingSlashes(dirPath);\n  const url = `${baseUrl}/vault/${encoded ? `${encoded}/` : ''}`;\n  const response = await this.helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: { Authorization: authHeader },\n    json: true,\n  });\n  return response?.files ?? [];\n}\n\nasync function scanFolders(startDir, depth = 0, maxDepth = 4) {\n  const results = { people: [], clients: {}, partners: [], teams: [], folders: [] };\n  if (depth > maxDepth) return results;\n  \n  const items = await listDirectory.call(this, startDir);\n  for (const item of items) {\n    if (!item.endsWith('/')) continue;\n    const name = item.slice(0, -1);\n    const fullPath = startDir ? `${startDir}/${name}` : name;\n    results.folders.push(fullPath);\n    \n    // Identify known folder types\n    if (fullPath.includes('One on One Meetings/') && depth === 3) {\n      results.people.push(name);\n    }\n    if (fullPath.includes('Active Deals/Clients/') && depth === 4) {\n      const location = fullPath.split('/')[4] || 'Unknown';\n      if (!results.clients[location]) results.clients[location] = [];\n      results.clients[location].push(name);\n    }\n    if (fullPath.includes('Active Deals/Partners/') && depth === 3) {\n      results.partners.push(name);\n    }\n    if (fullPath.includes('Expedient Teams/') && depth === 3) {\n      results.teams.push(name);\n    }\n    \n    // Recurse into subdirectories\n    const subResults = await scanFolders.call(this, fullPath, depth + 1, maxDepth);\n    results.folders.push(...subResults.folders);\n    results.people.push(...subResults.people);\n    results.partners.push(...subResults.partners);\n    results.teams.push(...subResults.teams);\n    for (const [loc, clients] of Object.entries(subResults.clients)) {\n      if (!results.clients[loc]) results.clients[loc] = [];\n      results.clients[loc].push(...clients);\n    }\n  }\n  return results;\n}\n\nconst structure = await scanFolders.call(this, 'Work');\nreturn { json: { vault_structure: structure } };"
+      },
+      "id": "scan-vault-structure",
+      "name": "Scan Vault Structure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1400, 500]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-context-inputs",
+      "name": "Merge Context Inputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [-1200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get config content and vault structure\nconst items = $input.all();\nlet configContent = '';\nlet vaultStructure = { people: [], clients: {}, partners: [], teams: [], folders: [] };\n\nfor (const item of items) {\n  if (item.json.vault_structure) {\n    vaultStructure = item.json.vault_structure;\n  }\n  // Config note content comes as string or object with content\n  if (typeof item.json === 'string') {\n    configContent = item.json;\n  } else if (item.json.content) {\n    configContent = item.json.content;\n  } else if (!item.json.vault_structure && !item.json.error) {\n    // Might be raw markdown\n    configContent = JSON.stringify(item.json);\n  }\n}\n\n// Parse config note sections\nlet attendees = '';\nlet clients = '';\nlet partners = '';\nlet routingRules = '';\n\nif (configContent) {\n  // Extract Attendee Context section\n  const attendeeMatch = configContent.match(/## Attendee Context[\\s\\S]*?(?=\\n## |$)/i);\n  if (attendeeMatch) attendees = attendeeMatch[0].trim();\n  \n  // Extract Clients section\n  const clientMatch = configContent.match(/## Known Clients by Location[\\s\\S]*?(?=\\n## |$)/i);\n  if (clientMatch) clients = clientMatch[0].trim();\n  \n  // Extract Partners section\n  const partnerMatch = configContent.match(/## Known Partners[\\s\\S]*?(?=\\n## |$)/i);\n  if (partnerMatch) partners = partnerMatch[0].trim();\n  \n  // Extract Routing Rules section\n  const routingMatch = configContent.match(/## Folder Routing Rules[\\s\\S]*?(?=\\n## |$)/i);\n  if (routingMatch) routingRules = routingMatch[0].trim();\n}\n\n// Build context object\nconst context = {\n  attendees,\n  clients,\n  partners,\n  routing_rules: routingRules,\n  vault_structure: vaultStructure,\n  discovered_people: vaultStructure.people || [],\n  discovered_clients: vaultStructure.clients || {},\n  discovered_partners: vaultStructure.partners || [],\n  discovered_teams: vaultStructure.teams || []\n};\n\nreturn { json: { context } };"
+      },
+      "id": "store-context",
+      "name": "Store Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1000, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get context from Store Context node\nconst context = $json.context || {};\n\nconst baseUrl = 'http://100.111.39.118:27123';\nconst authHeader = 'Bearer 4931ee13bc3472b907f251ce39d7b4229a4f7fc360c0ab8f52213329671a7b12';\n\nfunction encodePathPreservingSlashes(p) {\n  return p.split('/').filter(Boolean).map(encodeURIComponent).join('/');\n}\n\nasync function listDirectory(dirPath) {\n  const encoded = encodePathPreservingSlashes(dirPath);\n  const url = `${baseUrl}/vault/${encoded ? `${encoded}/` : ''}`;\n  const response = await this.helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: { Authorization: authHeader },\n    json: true,\n  });\n  return response?.files ?? [];\n}\n\nasync function findMarkdownFiles(startDir) {\n  const results = [];\n  const stack = [startDir];\n  while (stack.length) {\n    const dir = stack.pop();\n    const items = await listDirectory.call(this, dir);\n    for (const item of items) {\n      const isDirectory = item.endsWith('/');\n      const name = isDirectory ? item.slice(0, -1) : item;\n      const vaultPath = dir ? `${dir}/${name}` : name;\n      if (isDirectory) {\n        stack.push(vaultPath);\n        continue;\n      }\n      if (!name.endsWith('.md')) continue;\n      if (name === 'Dashboard.md') continue;\n      if (name.startsWith('Metis-Log-')) continue;\n      if (name.startsWith('Janitor-Log-')) continue;\n      if (name === 'Metis-Config.md') continue;\n      results.push(vaultPath);\n    }\n  }\n  return results;\n}\n\nconst files = await findMarkdownFiles.call(this, 'Work');\nconst limitedFiles = files.slice(0, 10);\n\nif (limitedFiles.length === 0) {\n  return [{ json: { vaultPath: '', skip: true, context } }];\n}\n\nreturn limitedFiles.map(vaultPath => ({ json: { vaultPath, skip: false, context } }));"
       },
       "id": "find-all-md-files",
       "name": "Find All MD Files",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1000, 400]
+      "position": [-800, 400]
     },
     {
       "parameters": {
@@ -48,7 +100,7 @@
       "name": "Read File Content",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [-800, 400],
+      "position": [-600, 400],
       "credentials": {
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
@@ -60,13 +112,13 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "try {\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  const vaultPath = $('Find All MD Files').item.json.vaultPath || '';\n  const filepath = vaultPath ? `${vaultRoot}/${vaultPath}` : '';\n  const relativePath = vaultPath || '';\n  \n  let content = '';\n  if (typeof $json === 'string') {\n    content = $json;\n  } else if ($json && typeof $json === 'object') {\n    if ($json.content) content = $json.content;\n    else if ($json.data) content = $json.data;\n    else if ($json.body) content = $json.body;\n    else if ($json.text) content = $json.text;\n  }\n  \n  // Fix: If content itself looks like JSON-wrapped at start, unwrap it\n  if (content && content.trim().startsWith('{\"content\":')) {\n    try {\n      const parsed = JSON.parse(content.trim());\n      if (parsed.content) content = parsed.content;\n    } catch (e) {}\n  }\n  \n  if ($json && $json.error) {\n    return { json: { filepath, filename: vaultPath.split('/').pop() || '', current_folder: vaultPath.substring(0, vaultPath.lastIndexOf('/')) || '', relative_path: relativePath, frontmatter: {}, content: '', has_frontmatter: false, error: $json.error.message || 'API error' } };\n  }\n  \n  const fmMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);\n  let frontmatter = {};\n  let bodyContent = content;\n  \n  if (fmMatch) {\n    fmMatch[1].split('\\n').forEach(line => {\n      const trimmed = line.trim();\n      if (trimmed && trimmed.includes(':')) {\n        const [key, ...valueParts] = trimmed.split(':');\n        if (key && valueParts.length) {\n          frontmatter[key.trim()] = valueParts.join(':').trim().replace(/^[\"']|[\"']$/g, '');\n        }\n      }\n    });\n    // Extract body after frontmatter\n    bodyContent = content.replace(/^---\\n[\\s\\S]*?\\n---\\n*/, '');\n  }\n  \n  // Fix: If body content is JSON-wrapped, unwrap it recursively\n  let unwrapAttempts = 0;\n  while (bodyContent.trim().startsWith('{\"content\":') && unwrapAttempts < 5) {\n    try {\n      const parsed = JSON.parse(bodyContent.trim());\n      if (parsed.content) {\n        bodyContent = parsed.content;\n        // If unwrapped content has frontmatter, strip it (we already have our own)\n        bodyContent = bodyContent.replace(/^---\\n[\\s\\S]*?\\n---\\n*/, '');\n      } else break;\n    } catch (e) { break; }\n    unwrapAttempts++;\n  }\n  \n  // Rebuild clean content\n  const cleanContent = fmMatch ? `---\\n${fmMatch[1]}\\n---\\n\\n${bodyContent}` : bodyContent;\n  \n  if (frontmatter.status === 'processed' && !frontmatter['needs-manual-review']) {\n    return { json: { filepath, filename: vaultPath.split('/').pop() || '', current_folder: vaultPath.substring(0, vaultPath.lastIndexOf('/')) || '', relative_path: relativePath, frontmatter, content: cleanContent, has_frontmatter: !!fmMatch, skip: true } };\n  }\n  \n  return { json: { filepath, filename: vaultPath.split('/').pop() || '', current_folder: vaultPath.substring(0, vaultPath.lastIndexOf('/')) || '', relative_path: relativePath, frontmatter, content: cleanContent, has_frontmatter: !!fmMatch } };\n} catch (error) {\n  const vaultPath = $('Find All MD Files').item.json.vaultPath || '';\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  return { json: { filepath: vaultPath ? `${vaultRoot}/${vaultPath}` : '', filename: vaultPath.split('/').pop() || '', current_folder: '', relative_path: vaultPath, frontmatter: {}, content: '', has_frontmatter: false, error: error.message } };\n}"
+        "jsCode": "try {\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  const inputData = $('Find All MD Files').item.json;\n  const vaultPath = inputData.vaultPath || '';\n  const context = inputData.context || {};\n  const filepath = vaultPath ? `${vaultRoot}/${vaultPath}` : '';\n  const relativePath = vaultPath || '';\n  \n  let content = '';\n  if (typeof $json === 'string') {\n    content = $json;\n  } else if ($json && typeof $json === 'object') {\n    if ($json.content) content = $json.content;\n    else if ($json.data) content = $json.data;\n    else if ($json.body) content = $json.body;\n    else if ($json.text) content = $json.text;\n  }\n  \n  // Fix: If content itself looks like JSON-wrapped at start, unwrap it\n  if (content && content.trim().startsWith('{\"content\":')) {\n    try {\n      const parsed = JSON.parse(content.trim());\n      if (parsed.content) content = parsed.content;\n    } catch (e) {}\n  }\n  \n  if ($json && $json.error) {\n    return { json: { filepath, filename: vaultPath.split('/').pop() || '', current_folder: vaultPath.substring(0, vaultPath.lastIndexOf('/')) || '', relative_path: relativePath, frontmatter: {}, content: '', has_frontmatter: false, error: $json.error.message || 'API error', context } };\n  }\n  \n  const fmMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);\n  let frontmatter = {};\n  let bodyContent = content;\n  \n  if (fmMatch) {\n    fmMatch[1].split('\\n').forEach(line => {\n      const trimmed = line.trim();\n      if (trimmed && trimmed.includes(':')) {\n        const [key, ...valueParts] = trimmed.split(':');\n        if (key && valueParts.length) {\n          frontmatter[key.trim()] = valueParts.join(':').trim().replace(/^[\"']|[\"']$/g, '');\n        }\n      }\n    });\n    // Extract body after frontmatter\n    bodyContent = content.replace(/^---\\n[\\s\\S]*?\\n---\\n*/, '');\n  }\n  \n  // Fix: If body content is JSON-wrapped, unwrap it recursively\n  let unwrapAttempts = 0;\n  while (bodyContent.trim().startsWith('{\"content\":') && unwrapAttempts < 5) {\n    try {\n      const parsed = JSON.parse(bodyContent.trim());\n      if (parsed.content) {\n        bodyContent = parsed.content;\n        // If unwrapped content has frontmatter, strip it (we already have our own)\n        bodyContent = bodyContent.replace(/^---\\n[\\s\\S]*?\\n---\\n*/, '');\n      } else break;\n    } catch (e) { break; }\n    unwrapAttempts++;\n  }\n  \n  // Rebuild clean content\n  const cleanContent = fmMatch ? `---\\n${fmMatch[1]}\\n---\\n\\n${bodyContent}` : bodyContent;\n  \n  if (frontmatter.status === 'processed' && !frontmatter['needs-manual-review']) {\n    return { json: { filepath, filename: vaultPath.split('/').pop() || '', current_folder: vaultPath.substring(0, vaultPath.lastIndexOf('/')) || '', relative_path: relativePath, frontmatter, content: cleanContent, has_frontmatter: !!fmMatch, skip: true, context } };\n  }\n  \n  return { json: { filepath, filename: vaultPath.split('/').pop() || '', current_folder: vaultPath.substring(0, vaultPath.lastIndexOf('/')) || '', relative_path: relativePath, frontmatter, content: cleanContent, has_frontmatter: !!fmMatch, context } };\n} catch (error) {\n  const inputData = $('Find All MD Files').item.json;\n  const vaultPath = inputData.vaultPath || '';\n  const context = inputData.context || {};\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  return { json: { filepath: vaultPath ? `${vaultRoot}/${vaultPath}` : '', filename: vaultPath.split('/').pop() || '', current_folder: '', relative_path: vaultPath, frontmatter: {}, content: '', has_frontmatter: false, error: error.message, context } };\n}"
       },
       "id": "parse-frontmatter",
       "name": "Parse Frontmatter",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-600, 400]
+      "position": [-400, 400]
     },
     {
       "parameters": {
@@ -81,18 +133,18 @@
       "name": "Skip Already Processed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [-400, 400]
+      "position": [-200, 400]
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const data = $json;\nconst contentPreview = (data.content || '').substring(0, 500);\n\nconst prompt = `You are analyzing an Obsidian note. First determine its type, then extract type-specific metadata.\n\nFILE PATH: ${data.relative_path || data.filepath}\nFRONTMATTER: ${JSON.stringify(data.frontmatter, null, 2)}\nCONTENT PREVIEW: ${contentPreview}\n\nFULL CONTENT:\n${data.content || ''}\n\n=== STEP 1: TYPE DETECTION ===\nDetermine the note type:\n- meeting: Discussion between people, attendees, action items\n- technical-note: Code, architecture, infrastructure docs\n- draft: Work-in-progress communication or document\n- research: Analysis, industry intel, citations\n- template: Reusable structure with placeholders\n- meta: System logs, automation, configuration\n- concept: Ideas, brainstorming, early-stage thinking\n\n=== STEP 2: TYPE-SPECIFIC EXTRACTION ===\n\nFor MEETING notes, extract:\n- meeting_type: 1on1|customer|partner|internal|unknown\n- person, client, partner, team, location as applicable\n- attendees, summary, action_items, key_topics\n- correct_folder based on: 1on1→Work/Areas/One on One Meetings/{person}/, customer→Work/Projects/Active Deals/Clients/{location}/{client}/, partner→Work/Projects/Active Deals/Partners/{partner}/, internal→Work/Areas/Expedient Teams/{team}/\n\nKNOWN PEOPLE AT EXPEDIENT: Rob McCafferty (manager), David Determan, Patrick Rosenberger, Keith Cadieux, Ben Gallo, Brian Lacombe, Chad St. Thomas, David Saliba, Jacob Figueroa, Jason Molitor, Aaron Littlejohn, Jeff Fertitta, Anthony Jackman, Duane Weber, Bob Carter, Kate Rance\n\nKNOWN CLIENTS: Boston(AAA, Bluestone Bank, Chase Corp, Phia, etc), Denver(AGC Bio, DMSi), Milwaukee(Arhaus, Aspirus, Medline), Indianapolis(Aces Power, Byrider, Heartland Dental), Cincinnati(MCC Label), Phoenix(Brinks, Conagra, Sonora Quest), Louisville(Lifespring)\n\nFor TECHNICAL-NOTE, extract:\n- category: architecture|code|infrastructure|research\n- technologies, related_projects, summary\n- correct_folder: Work/Knowledge/Technical/{category}/\n\nFor DRAFT, extract:\n- draft_type: communication|document|presentation\n- recipient, purpose, title, summary\n- correct_folder: Work/Drafts/{draft_type}s/\n\nFor RESEARCH, extract:\n- topic, category: technical|business|product, subcategory\n- sources, related_to, summary\n- correct_folder based on category\n\nFor TEMPLATE, extract:\n- template_type: automation|document|prompt\n- use_case, variables, summary\n- correct_folder: Work/Templates/{template_type}s/\n\nFor META, extract:\n- meta_type: log|automation|configuration\n- system, summary\n- correct_folder: Work/Meta/{meta_type}s/\n\nFor CONCEPT, extract:\n- title, maturity: idea|exploration|proposed|validated\n- related_project, stakeholders, summary\n- correct_folder: Work/Projects/{related_project}/Concepts/ or Work/Knowledge/Product/Features/\n\n=== OUTPUT FORMAT ===\nReturn ONLY valid JSON:\n{\n  \"note_type\": \"meeting|technical-note|draft|research|template|meta|concept\",\n  \"type_confidence\": \"high|medium|low\",\n  \"type_reasoning\": \"brief explanation\",\n  ... type-specific fields ...,\n  \"correct_folder\": \"full path\",\n  \"confidence\": \"high|medium|low\",\n  \"needs_manual_review\": true|false\n}\n\nReturn ONLY the JSON, no markdown, no explanation.`;\n\nreturn { json: { ...data, llm_prompt: prompt } };"
+        "jsCode": "const data = $json;\n\n// Get context from earlier in the chain\nlet context = data.context || {};\nif (!context.attendees) {\n  try {\n    context = $('Find All MD Files').item.json.context || {};\n  } catch (e) {\n    context = {};\n  }\n}\n\nconst contentPreview = (data.content || '').substring(0, 500);\n\n// Build context sections for the prompt\nconst attendeeContext = context.attendees || 'No attendee context available.';\nconst clientContext = context.clients || 'No client context available.';\nconst partnerContext = context.partners || 'No partner context available.';\nconst routingRules = context.routing_rules || '';\n\n// Include discovered folders for better routing\nconst discoveredPeople = (context.discovered_people || []).join(', ') || 'None discovered';\nconst discoveredPartners = (context.discovered_partners || []).join(', ') || 'None discovered';\nconst discoveredTeams = (context.discovered_teams || []).join(', ') || 'None discovered';\nlet discoveredClients = '';\nif (context.discovered_clients && typeof context.discovered_clients === 'object') {\n  discoveredClients = Object.entries(context.discovered_clients)\n    .map(([loc, clients]) => `${loc}: ${clients.join(', ')}`)\n    .join('\\n') || 'None discovered';\n}\n\nconst prompt = `You are analyzing an Obsidian note. First determine its type, then extract type-specific metadata.\n\nFILE PATH: ${data.relative_path || data.filepath}\nFRONTMATTER: ${JSON.stringify(data.frontmatter, null, 2)}\nCONTENT PREVIEW: ${contentPreview}\n\nFULL CONTENT:\n${data.content || ''}\n\n=== CONTEXT FROM CONFIG ===\n\n${attendeeContext}\n\n${clientContext}\n\n${partnerContext}\n\n=== DISCOVERED VAULT STRUCTURE ===\n\nEXISTING 1:1 FOLDERS (people): ${discoveredPeople}\nEXISTING PARTNER FOLDERS: ${discoveredPartners}\nEXISTING TEAM FOLDERS: ${discoveredTeams}\nEXISTING CLIENT FOLDERS BY LOCATION:\n${discoveredClients}\n\n=== STEP 1: TYPE DETECTION ===\nDetermine the note type:\n- meeting: Discussion between people, attendees, action items\n- technical-note: Code, architecture, infrastructure docs\n- draft: Work-in-progress communication or document\n- research: Analysis, industry intel, citations\n- template: Reusable structure with placeholders\n- meta: System logs, automation, configuration\n- concept: Ideas, brainstorming, early-stage thinking\n\n=== STEP 2: TYPE-SPECIFIC EXTRACTION ===\n\nFor MEETING notes, extract:\n- meeting_type: 1on1|customer|partner|internal|unknown\n- person, client, partner, team, location as applicable\n- attendees, summary, action_items, key_topics\n- correct_folder based on: 1on1→Work/Areas/One on One Meetings/{person}/, customer→Work/Projects/Active Deals/Clients/{location}/{client}/, partner→Work/Projects/Active Deals/Partners/{partner}/, internal→Work/Areas/Expedient Teams/{team}/\n\nFor TECHNICAL-NOTE, extract:\n- category: architecture|code|infrastructure|research\n- technologies, related_projects, summary\n- correct_folder: Work/Knowledge/Technical/{category}/\n\nFor DRAFT, extract:\n- draft_type: communication|document|presentation\n- recipient, purpose, title, summary\n- correct_folder: Work/Drafts/{draft_type}s/\n\nFor RESEARCH, extract:\n- topic, category: technical|business|product, subcategory\n- sources, related_to, summary\n- correct_folder based on category\n\nFor TEMPLATE, extract:\n- template_type: automation|document|prompt\n- use_case, variables, summary\n- correct_folder: Work/Templates/{template_type}s/\n\nFor META, extract:\n- meta_type: log|automation|configuration\n- system, summary\n- correct_folder: Work/Meta/{meta_type}s/\n\nFor CONCEPT, extract:\n- title, maturity: idea|exploration|proposed|validated\n- related_project, stakeholders, summary\n- correct_folder: Work/Projects/{related_project}/Concepts/ or Work/Knowledge/Product/Features/\n\n${routingRules ? '=== CUSTOM ROUTING RULES ===\\n' + routingRules : ''}\n\n=== OUTPUT FORMAT ===\nReturn ONLY valid JSON:\n{\n  \"note_type\": \"meeting|technical-note|draft|research|template|meta|concept\",\n  \"type_confidence\": \"high|medium|low\",\n  \"type_reasoning\": \"brief explanation\",\n  ... type-specific fields ...,\n  \"correct_folder\": \"full path\",\n  \"confidence\": \"high|medium|low\",\n  \"needs_manual_review\": true|false\n}\n\nReturn ONLY the JSON, no markdown, no explanation.`;\n\nreturn { json: { ...data, llm_prompt: prompt, context } };"
       },
       "id": "build-llm-prompt",
       "name": "Build LLM Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-200, 300]
+      "position": [0, 300]
     },
     {
       "parameters": {
@@ -109,7 +161,7 @@
       },
       "type": "@n8n/n8n-nodes-langchain.ollama",
       "typeVersion": 1,
-      "position": [0, 300],
+      "position": [200, 300],
       "id": "llm-analyze-note",
       "name": "LLM Analyze Note",
       "credentials": {
@@ -128,7 +180,7 @@
       "name": "Parse LLM Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [200, 300]
+      "position": [400, 300]
     },
     {
       "parameters": {
@@ -147,7 +199,7 @@
       "name": "Needs Manual Review?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [400, 300]
+      "position": [600, 300]
     },
     {
       "parameters": {
@@ -158,7 +210,7 @@
       "name": "Update Frontmatter",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 200]
+      "position": [800, 200]
     },
     {
       "parameters": {
@@ -176,7 +228,7 @@
       "name": "Write Updated Content",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [800, 200],
+      "position": [1000, 200],
       "credentials": {
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
@@ -198,7 +250,7 @@
       "name": "Needs Move?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1000, 200]
+      "position": [1200, 200]
     },
     {
       "parameters": {
@@ -209,7 +261,7 @@
       "name": "Prepare File Move",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 100]
+      "position": [1400, 100]
     },
     {
       "parameters": {
@@ -227,7 +279,7 @@
       "name": "Write File to New Location",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1400, 100],
+      "position": [1600, 100],
       "credentials": {
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
@@ -248,7 +300,7 @@
       "name": "Delete Old File",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1600, 100],
+      "position": [1800, 100],
       "credentials": {
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
@@ -266,7 +318,7 @@
       "name": "Tag for Manual Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 400]
+      "position": [800, 400]
     },
     {
       "parameters": {
@@ -284,7 +336,7 @@
       "name": "Write Review Tag",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [800, 400],
+      "position": [1000, 400],
       "credentials": {
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
@@ -299,7 +351,7 @@
       "name": "Merge All Results",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 2.1,
-      "position": [1800, 300]
+      "position": [2000, 300]
     },
     {
       "parameters": {
@@ -309,7 +361,7 @@
       "name": "Build Summary Log",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2000, 300]
+      "position": [2200, 300]
     },
     {
       "parameters": {
@@ -327,7 +379,7 @@
       "name": "Write Log File",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2200, 300],
+      "position": [2400, 300],
       "credentials": {
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
@@ -346,15 +398,33 @@
       "name": "Webhook Response",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [2400, 300]
+      "position": [2600, 300]
     }
   ],
   "pinData": {},
   "connections": {
     "Webhook Trigger": {
-      "main": [[{ "node": "Find All MD Files", "type": "main", "index": 0 }]]
+      "main": [[
+        { "node": "Read Config Note", "type": "main", "index": 0 },
+        { "node": "Scan Vault Structure", "type": "main", "index": 0 }
+      ]]
     },
     "Nightly Cron (2am)": {
+      "main": [[
+        { "node": "Read Config Note", "type": "main", "index": 0 },
+        { "node": "Scan Vault Structure", "type": "main", "index": 0 }
+      ]]
+    },
+    "Read Config Note": {
+      "main": [[{ "node": "Merge Context Inputs", "type": "main", "index": 0 }]]
+    },
+    "Scan Vault Structure": {
+      "main": [[{ "node": "Merge Context Inputs", "type": "main", "index": 1 }]]
+    },
+    "Merge Context Inputs": {
+      "main": [[{ "node": "Store Context", "type": "main", "index": 0 }]]
+    },
+    "Store Context": {
       "main": [[{ "node": "Find All MD Files", "type": "main", "index": 0 }]]
     },
     "Find All MD Files": {
