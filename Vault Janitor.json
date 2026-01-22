@@ -13,7 +13,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        -4432,
+        -4832,
         512
       ],
       "webhookId": "vault-janitor"
@@ -34,26 +34,122 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [
-        -4432,
+        -4832,
         672
       ]
     },
     {
       "parameters": {
-        "jsCode": "const baseUrl = 'http://100.111.39.118:27123';\nconst authHeader = 'Bearer 4931ee13bc3472b907f251ce39d7b4229a4f7fc360c0ab8f52213329671a7b12';\n\nfunction encodePathPreservingSlashes(p) {\n  return p\n    .split('/')\n    .filter(Boolean)\n    .map(encodeURIComponent)\n    .join('/');\n}\n\nasync function listDirectory(dirPath) {\n  const encoded = encodePathPreservingSlashes(dirPath);\n  const url = `${baseUrl}/vault/${encoded ? `${encoded}/` : ''}`;\n\n  const response = await this.helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: {\n      Authorization: authHeader,\n    },\n    json: true,\n  });\n\n  return response?.files ?? [];\n}\n\nasync function findMarkdownFiles(startDir) {\n  const results = [];\n  const stack = [startDir];\n\n  while (stack.length) {\n    const dir = stack.pop();\n    const items = await listDirectory.call(this, dir);\n\n    for (const item of items) {\n      const isDirectory = item.endsWith('/');\n      const name = isDirectory ? item.slice(0, -1) : item;\n      const vaultPath = dir ? `${dir}/${name}` : name;\n\n      if (isDirectory) {\n        stack.push(vaultPath);\n        continue;\n      }\n\n      if (!name.endsWith('.md')) continue;\n      if (name === 'Dashboard.md') continue;\n      if (name.startsWith('Janitor-Log-')) continue;\n\n      results.push(vaultPath);\n    }\n  }\n\n  return results;\n}\n\nconst files = await findMarkdownFiles.call(this, 'Work');\n\n// Limit to 10 files for testing\nconst limitedFiles = files.slice(0, 10);\n\nif (limitedFiles.length === 0) {\n  return [{ json: { vaultPath: '', skip: true } }];\n}\n\nreturn limitedFiles.map(vaultPath => ({\n  json: {\n    vaultPath,\n    skip: false,\n  }\n}));\n"
+        "jsCode": "const baseUrl = 'http://100.111.39.118:27123';\nconst authHeader = 'Bearer 4931ee13bc3472b907f251ce39d7b4229a4f7fc360c0ab8f52213329671a7b12';\n\nfunction encodePathPreservingSlashes(p) {\n  return p\n    .split('/')\n    .filter(Boolean)\n    .map(encodeURIComponent)\n    .join('/');\n}\n\nasync function listDirectory(dirPath) {\n  const encoded = encodePathPreservingSlashes(dirPath);\n  const url = `${baseUrl}/vault/${encoded ? `${encoded}/` : ''}`;\n\n  const response = await this.helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: {\n      Authorization: authHeader,\n    },\n    json: true,\n  });\n\n  return response?.files ?? [];\n}\n\nasync function scanFolderStructure(startDir, maxDepth = 4) {\n  const structure = {\n    folders: [],\n    team_members: [],\n    clients_by_location: {},\n    partners: [],\n    teams: [],\n    locations: new Set()\n  };\n  \n  const stack = [{ path: startDir, depth: 0 }];\n\n  while (stack.length) {\n    const { path: dir, depth } = stack.pop();\n    if (depth > maxDepth) continue;\n    \n    const items = await listDirectory.call(this, dir);\n\n    for (const item of items) {\n      if (!item.endsWith('/')) continue;\n      \n      const name = item.slice(0, -1);\n      const fullPath = dir ? `${dir}/${name}` : name;\n      \n      structure.folders.push(fullPath);\n      \n      // Extract team members from \"One on One Meetings/*\"\n      if (dir.endsWith('One on One Meetings')) {\n        structure.team_members.push(name);\n      }\n      \n      // Extract clients from \"Clients/{location}/{client}\"\n      const clientsMatch = dir.match(/Clients\\/([^\\/]+)$/);\n      if (clientsMatch) {\n        const location = clientsMatch[1];\n        structure.locations.add(location);\n        if (!structure.clients_by_location[location]) {\n          structure.clients_by_location[location] = [];\n        }\n        structure.clients_by_location[location].push(name);\n      }\n      \n      // Extract partners from \"Partners/*\"\n      if (dir.endsWith('Partners')) {\n        structure.partners.push(name);\n      }\n      \n      // Extract teams from \"Expedient Teams/*\"\n      if (dir.endsWith('Expedient Teams')) {\n        structure.teams.push(name);\n      }\n      \n      stack.push({ path: fullPath, depth: depth + 1 });\n    }\n  }\n  \n  structure.locations = Array.from(structure.locations);\n  return structure;\n}\n\nconst structure = await scanFolderStructure.call(this, 'Work');\n\nreturn [{\n  json: {\n    vault_structure: structure,\n    folder_tree: structure.folders.join('\\n'),\n    discovered_team_members: structure.team_members,\n    discovered_clients: structure.clients_by_location,\n    discovered_partners: structure.partners,\n    discovered_teams: structure.teams,\n    discovered_locations: structure.locations\n  }\n}];"
+      },
+      "id": "scan-vault-structure-001",
+      "name": "Scan Vault Structure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4632,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://100.111.39.118:27123/vault/Work%2F00-Inbox%2FJanitor-Config.md",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "options": {}
+      },
+      "id": "read-config-note-001",
+      "name": "Read Config Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -4432,
+        592
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine scanned structure with config overrides\nconst scanned = $('Scan Vault Structure').first().json;\nconst configResponse = $json;\n\nlet configContent = '';\nif (configResponse && !configResponse.error) {\n  if (typeof configResponse === 'string') {\n    configContent = configResponse;\n  } else if (configResponse.content) {\n    configContent = configResponse.content;\n  } else if (configResponse.data) {\n    configContent = configResponse.data;\n  }\n}\n\nconst prompt = `You are analyzing an Obsidian vault's folder structure to understand its organization system for meeting notes.\n\n=== DISCOVERED FOLDER STRUCTURE ===\n${scanned.folder_tree}\n\n=== DISCOVERED ENTITIES FROM FOLDERS ===\nTeam Members (from One on One Meeting folders): ${JSON.stringify(scanned.discovered_team_members)}\nClients by Location: ${JSON.stringify(scanned.discovered_clients)}\nPartners: ${JSON.stringify(scanned.discovered_partners)}\nTeams: ${JSON.stringify(scanned.discovered_teams)}\nLocations: ${JSON.stringify(scanned.discovered_locations)}\n\n=== USER CONFIG FILE (if present) ===\n${configContent || 'No config file found - use discovered structure only'}\n\n=== TASK ===\nAnalyze this vault structure and create a comprehensive context for classifying meeting notes.\nCombine discovered entities with any config file overrides.\nInfer folder patterns from the structure.\n\nReturn ONLY valid JSON (no markdown, no code blocks, no explanation):\n\n{\n  \"folder_patterns\": {\n    \"1on1\": \"the exact folder pattern for 1-on-1 meetings, e.g. Work/Areas/One on One Meetings/{person}/\",\n    \"customer\": \"the exact folder pattern for customer meetings, e.g. Work/Projects/Active Deals/Clients/{location}/{client}/\",\n    \"partner\": \"the exact folder pattern for partner meetings, e.g. Work/Projects/Active Deals/Partners/{partner}/\",\n    \"internal\": \"the exact folder pattern for internal team meetings, e.g. Work/Areas/Expedient Teams/{team}/\"\n  },\n  \"team_members\": [\"list of all team member names\"],\n  \"clients_by_location\": {\n    \"Location1\": [\"Client1\", \"Client2\"],\n    \"Location2\": [\"Client3\"]\n  },\n  \"partners\": [\"list of partner names\"],\n  \"teams\": [\"list of team names\"],\n  \"locations\": [\"list of location names\"],\n  \"classification_guidance\": \"Brief guidance on how to classify notes based on content\"\n}`;\n\nreturn [{\n  json: {\n    ...scanned,\n    config_content: configContent,\n    structure_prompt: prompt\n  }\n}];"
+      },
+      "id": "build-pass1-prompt-001",
+      "name": "Build Pass 1 Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4232,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "qwen2.5:14b-instruct",
+          "mode": "list",
+          "cachedResultName": "qwen2.5:14b-instruct"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.structure_prompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -4032,
+        592
+      ],
+      "id": "llm-pass1-analyze-001",
+      "name": "LLM Pass 1 - Analyze Structure",
+      "credentials": {
+        "ollamaApi": {
+          "id": "UrA6yVTCmM5YHOen",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM response and store structure context\nlet llmOutput = '';\n\nif ($json.output) {\n  llmOutput = $json.output;\n} else if ($json.text) {\n  llmOutput = $json.text;\n} else if ($json.content) {\n  if (Array.isArray($json.content)) {\n    const textContent = $json.content.find(c => c.type === 'text');\n    if (textContent && textContent.text) {\n      llmOutput = textContent.text;\n    }\n  } else if (typeof $json.content === 'string') {\n    llmOutput = $json.content;\n  }\n} else if ($json.message) {\n  llmOutput = $json.message.content || $json.message.text || '';\n}\n\n// Clean up response\nlet cleaned = llmOutput.trim();\ncleaned = cleaned.replace(/^```json\\n?/i, '');\ncleaned = cleaned.replace(/^```\\n?/i, '');\ncleaned = cleaned.replace(/\\n?```$/i, '');\ncleaned = cleaned.trim();\n\nlet structureContext = {};\ntry {\n  structureContext = JSON.parse(cleaned);\n} catch (e) {\n  const jsonMatch = cleaned.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      structureContext = JSON.parse(jsonMatch[0]);\n    } catch (e2) {\n      // Fallback to discovered structure if LLM parsing fails\n      const scanned = $('Scan Vault Structure').first().json;\n      structureContext = {\n        folder_patterns: {\n          '1on1': 'Work/Areas/One on One Meetings/{person}/',\n          'customer': 'Work/Projects/Active Deals/Clients/{location}/{client}/',\n          'partner': 'Work/Projects/Active Deals/Partners/{partner}/',\n          'internal': 'Work/Areas/Expedient Teams/{team}/'\n        },\n        team_members: scanned.discovered_team_members || [],\n        clients_by_location: scanned.discovered_clients || {},\n        partners: scanned.discovered_partners || [],\n        teams: scanned.discovered_teams || [],\n        locations: scanned.discovered_locations || [],\n        classification_guidance: 'Classify based on attendees and content',\n        parse_error: e2.message\n      };\n    }\n  }\n}\n\n// Ensure all required fields exist\nif (!structureContext.folder_patterns) {\n  structureContext.folder_patterns = {\n    '1on1': 'Work/Areas/One on One Meetings/{person}/',\n    'customer': 'Work/Projects/Active Deals/Clients/{location}/{client}/',\n    'partner': 'Work/Projects/Active Deals/Partners/{partner}/',\n    'internal': 'Work/Areas/Expedient Teams/{team}/'\n  };\n}\n\nreturn [{\n  json: {\n    structure_context: structureContext\n  }\n}];"
+      },
+      "id": "store-structure-context-001",
+      "name": "Store Structure Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3832,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const baseUrl = 'http://100.111.39.118:27123';\nconst authHeader = 'Bearer 4931ee13bc3472b907f251ce39d7b4229a4f7fc360c0ab8f52213329671a7b12';\n\nfunction encodePathPreservingSlashes(p) {\n  return p\n    .split('/')\n    .filter(Boolean)\n    .map(encodeURIComponent)\n    .join('/');\n}\n\nasync function listDirectory(dirPath) {\n  const encoded = encodePathPreservingSlashes(dirPath);\n  const url = `${baseUrl}/vault/${encoded ? `${encoded}/` : ''}`;\n\n  const response = await this.helpers.httpRequest({\n    method: 'GET',\n    url,\n    headers: {\n      Authorization: authHeader,\n    },\n    json: true,\n  });\n\n  return response?.files ?? [];\n}\n\nasync function findMarkdownFiles(startDir) {\n  const results = [];\n  const stack = [startDir];\n\n  while (stack.length) {\n    const dir = stack.pop();\n    const items = await listDirectory.call(this, dir);\n\n    for (const item of items) {\n      const isDirectory = item.endsWith('/');\n      const name = isDirectory ? item.slice(0, -1) : item;\n      const vaultPath = dir ? `${dir}/${name}` : name;\n\n      if (isDirectory) {\n        stack.push(vaultPath);\n        continue;\n      }\n\n      if (!name.endsWith('.md')) continue;\n      if (name === 'Dashboard.md') continue;\n      if (name.startsWith('Janitor-Log-')) continue;\n      if (name === 'Janitor-Config.md') continue;\n\n      results.push(vaultPath);\n    }\n  }\n\n  return results;\n}\n\n// Get structure context from Pass 1\nconst structureContext = $('Store Structure Context').first().json.structure_context;\n\nconst files = await findMarkdownFiles.call(this, 'Work');\n\n// Limit to 10 files for testing\nconst limitedFiles = files.slice(0, 10);\n\nif (limitedFiles.length === 0) {\n  return [{ json: { vaultPath: '', skip: true, structure_context: structureContext } }];\n}\n\nreturn limitedFiles.map(vaultPath => ({\n  json: {\n    vaultPath,\n    skip: false,\n    structure_context: structureContext\n  }\n}));\n"
       },
       "id": "2ed68cca-a14b-4d97-9669-235385c3788c",
       "name": "Find All MD Files",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -4096,
+        -3632,
         592
       ]
     },
     {
       "parameters": {
-        "url": "=http://100.111.39.118:27123/vault/{{ encodeURIComponent($json.vaultPath || $json.relative_path || '') }}",
+        "url": "=http://100.111.39.118:27123/vault/{{ $json.vaultPath || $json.relative_path || '' }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBearerAuth",
         "options": {
@@ -65,14 +161,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -3840,
+        -3424,
         592
       ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "GLdl8kauGGZ3sdXZ",
-          "name": "Header Auth account"
-        },
         "httpBearerAuth": {
           "id": "0e6NCchfeK4TA18n",
           "name": "Obsidian Local REST API"
@@ -83,51 +175,74 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "try {\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  // Get vaultPath from input chain (from Find All MD Files node)\n  const vaultPath = $input.item.json.vaultPath || $json.vaultPath || '';\n  // Construct absolute filepath\n  const filepath = vaultPath ? `${vaultRoot}/${vaultPath}` : '';\n  const relativePath = vaultPath || '';\n  \n  // Handle different response formats from Obsidian API\n  // API might return: plain text, { content: \"...\" }, or { data: \"...\" }\n  let content = '';\n  \n  // Debug: Log what we're receiving\n  const receivedData = $json;\n  const receivedType = typeof receivedData;\n  const receivedKeys = receivedType === 'object' && receivedData !== null ? Object.keys(receivedData) : [];\n  \n  if (typeof $json === 'string') {\n    // Plain text response\n    content = $json;\n  } else if ($json && typeof $json === 'object') {\n    // Try content field first (most common)\n    if ($json.content && typeof $json.content === 'string') {\n      content = $json.content;\n    } else if ($json.data && typeof $json.data === 'string') {\n      content = $json.data;\n    } else if ($json.body && typeof $json.body === 'string') {\n      content = $json.body;\n    } else if ($json.text && typeof $json.text === 'string') {\n      content = $json.text;\n    } else if (Object.keys($json).length === 0) {\n      // Empty object - file might be empty\n      content = '';\n    } else {\n      // If it's an object but no recognized field, try to extract any string value\n      const stringValues = Object.values($json).filter(v => typeof v === 'string');\n      if (stringValues.length > 0) {\n        content = stringValues[0];\n      }\n    }\n  } else if ($json === null || $json === undefined) {\n    content = '';\n  } else {\n    // Fallback: convert to string\n    content = String($json || '');\n  }\n  \n  if (!content && !$json.error) {\n    // Debug info to help diagnose the issue\n    const debugInfo = {\n      receivedType: receivedType,\n      receivedKeys: receivedKeys,\n      receivedDataPreview: typeof receivedData === 'object' && receivedData !== null ? JSON.stringify(receivedData).substring(0, 200) : String(receivedData || '').substring(0, 200),\n      vaultPath: vaultPath\n    };\n    return {\n      json: {\n        filepath,\n        filename: vaultPath ? vaultPath.split('/').pop() : '',\n        current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n        relative_path: relativePath,\n        frontmatter: {},\n        content: '',\n        has_frontmatter: false,\n        error: 'No content returned from API',\n        debug: debugInfo\n      }\n    };\n  }\n  \n  if ($json.error) {\n    return {\n      json: {\n        filepath,\n        filename: vaultPath ? vaultPath.split('/').pop() : '',\n        current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n        relative_path: relativePath,\n        frontmatter: {},\n        content: '',\n        has_frontmatter: false,\n        error: $json.error.message || 'API error'\n      }\n    };\n  }\n  \n  // Extract frontmatter\n  const fmMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);\n  let frontmatter = {};\n  if (fmMatch) {\n    const fmText = fmMatch[1];\n    fmText.split('\\n').forEach(line => {\n      const trimmed = line.trim();\n      if (trimmed && trimmed.includes(':')) {\n        const [key, ...valueParts] = trimmed.split(':');\n        if (key && valueParts.length) {\n          const value = valueParts.join(':').trim();\n          // Handle quoted values\n          frontmatter[key.trim()] = value.replace(/^[\"']|[\"']$/g, '');\n        }\n      }\n    });\n  }\n  \n  // SKIP LOGIC: If file is already processed, skip it\n  if (frontmatter.status === 'processed' && !frontmatter.needs_manual_review) {\n    return {\n      json: {\n        filepath,\n        filename: vaultPath ? vaultPath.split('/').pop() : '',\n        current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n        relative_path: relativePath,\n        frontmatter,\n        content,\n        has_frontmatter: !!fmMatch,\n        skip: true\n      }\n    };\n  }\n  \n  return {\n    json: {\n      filepath,\n      filename: vaultPath ? vaultPath.split('/').pop() : '',\n      current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n      relative_path: relativePath,\n      frontmatter,\n      content,\n      has_frontmatter: !!fmMatch\n    }\n  };\n} catch (error) {\n  const vaultPath = $input.item.json.vaultPath || '';\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  const filepath = vaultPath ? `${vaultRoot}/${vaultPath}` : '';\n  return {\n    json: {\n      filepath,\n      filename: vaultPath ? vaultPath.split('/').pop() : '',\n      current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n      relative_path: vaultPath || '',\n      frontmatter: {},\n      content: '',\n      has_frontmatter: false,\n      error: error.message\n    }\n  };\n}"
+        "jsCode": "try {\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  // Get vaultPath directly from Find All MD Files node (HTTP Request doesn't preserve input)\n  const vaultPath = $('Find All MD Files').item.json.vaultPath || '';\n  // Get structure context from Find All MD Files node\n  const structureContext = $('Find All MD Files').item.json.structure_context || {};\n  // Construct absolute filepath\n  const filepath = vaultPath ? `${vaultRoot}/${vaultPath}` : '';\n  const relativePath = vaultPath || '';\n  \n  // Handle different response formats from Obsidian API\n  // API might return: plain text, { content: \"...\" }, or { data: \"...\" }\n  let content = '';\n  \n  // Debug: Log what we're receiving\n  const receivedData = $json;\n  const receivedType = typeof receivedData;\n  const receivedKeys = receivedType === 'object' && receivedData !== null ? Object.keys(receivedData) : [];\n  \n  if (typeof $json === 'string') {\n    // Plain text response\n    content = $json;\n  } else if ($json && typeof $json === 'object') {\n    // Try content field first (most common)\n    if ($json.content && typeof $json.content === 'string') {\n      content = $json.content;\n    } else if ($json.data && typeof $json.data === 'string') {\n      content = $json.data;\n    } else if ($json.body && typeof $json.body === 'string') {\n      content = $json.body;\n    } else if ($json.text && typeof $json.text === 'string') {\n      content = $json.text;\n    } else if (Object.keys($json).length === 0) {\n      // Empty object - file might be empty\n      content = '';\n    } else {\n      // If it's an object but no recognized field, try to extract any string value\n      const stringValues = Object.values($json).filter(v => typeof v === 'string');\n      if (stringValues.length > 0) {\n        content = stringValues[0];\n      }\n    }\n  } else if ($json === null || $json === undefined) {\n    content = '';\n  } else {\n    // Fallback: convert to string\n    content = String($json || '');\n  }\n  \n  if (!content && !$json.error) {\n    // Debug info to help diagnose the issue\n    const debugInfo = {\n      receivedType: receivedType,\n      receivedKeys: receivedKeys,\n      receivedDataPreview: typeof receivedData === 'object' && receivedData !== null ? JSON.stringify(receivedData).substring(0, 200) : String(receivedData || '').substring(0, 200),\n      vaultPath: vaultPath\n    };\n    return {\n      json: {\n        filepath,\n        filename: vaultPath ? vaultPath.split('/').pop() : '',\n        current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n        relative_path: relativePath,\n        frontmatter: {},\n        content: '',\n        has_frontmatter: false,\n        error: 'No content returned from API',\n        debug: debugInfo,\n        structure_context: structureContext\n      }\n    };\n  }\n  \n  if ($json.error) {\n    return {\n      json: {\n        filepath,\n        filename: vaultPath ? vaultPath.split('/').pop() : '',\n        current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n        relative_path: relativePath,\n        frontmatter: {},\n        content: '',\n        has_frontmatter: false,\n        error: $json.error.message || 'API error',\n        structure_context: structureContext\n      }\n    };\n  }\n  \n  // Extract frontmatter\n  const fmMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);\n  let frontmatter = {};\n  if (fmMatch) {\n    const fmText = fmMatch[1];\n    fmText.split('\\n').forEach(line => {\n      const trimmed = line.trim();\n      if (trimmed && trimmed.includes(':')) {\n        const [key, ...valueParts] = trimmed.split(':');\n        if (key && valueParts.length) {\n          const value = valueParts.join(':').trim();\n          // Handle quoted values\n          frontmatter[key.trim()] = value.replace(/^[\"']|[\"']$/g, '');\n        }\n      }\n    });\n  }\n  \n  // SKIP LOGIC: If file is already processed, skip it\n  if (frontmatter.status === 'processed' && !frontmatter.needs_manual_review) {\n    return {\n      json: {\n        filepath,\n        filename: vaultPath ? vaultPath.split('/').pop() : '',\n        current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n        relative_path: relativePath,\n        frontmatter,\n        content,\n        has_frontmatter: !!fmMatch,\n        skip: true,\n        structure_context: structureContext\n      }\n    };\n  }\n  \n  return {\n    json: {\n      filepath,\n      filename: vaultPath ? vaultPath.split('/').pop() : '',\n      current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n      relative_path: relativePath,\n      frontmatter,\n      content,\n      has_frontmatter: !!fmMatch,\n      structure_context: structureContext\n    }\n  };\n} catch (error) {\n  const vaultPath = $('Find All MD Files').item.json.vaultPath || '';\n  const structureContext = $('Find All MD Files').item.json.structure_context || {};\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  const filepath = vaultPath ? `${vaultRoot}/${vaultPath}` : '';\n  return {\n    json: {\n      filepath,\n      filename: vaultPath ? vaultPath.split('/').pop() : '',\n      current_folder: vaultPath ? vaultPath.substring(0, vaultPath.lastIndexOf('/')) : '',\n      relative_path: vaultPath || '',\n      frontmatter: {},\n      content: '',\n      has_frontmatter: false,\n      error: error.message,\n      structure_context: structureContext\n    }\n  };\n}"
       },
       "id": "f05c5367-e755-4901-abe7-14c617db195b",
       "name": "Parse Frontmatter",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -3632,
+        -3216,
         592
       ]
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "id": "llm-prompt",
-              "name": "prompt",
-              "value": "=Analyze this Obsidian meeting note and extract metadata. Be confident - only mark for manual review if truly uncertain.\n\n=== FILE INFORMATION ===\nFile Path: {{ $json.relative_path || $json.filepath }}\nExisting Frontmatter:\n{{ JSON.stringify($json.frontmatter, null, 2) }}\n\n=== NOTE CONTENT ===\n{{ $json.content }}\n\n=== TASK ===\nClassify the meeting type, extract metadata, and determine the correct folder location.\n\n=== OUTPUT FORMAT ===\nReturn ONLY valid JSON (no markdown, no code blocks, no explanation). Use this exact structure:\n\n{\n  \"meeting_type\": \"1on1|customer|partner|internal|unknown\",\n  \"person\": \"Full Name\" or empty string,\n  \"client\": \"Company Name\" or empty string,\n  \"partner\": \"Partner Name\" or empty string,\n  \"team\": \"Team Name\" or empty string,\n  \"location\": \"Boston|Denver|Milwaukee|Indianapolis|Cincinnati|Phoenix|Louisville\" or empty string,\n  \"attendees\": \"Name1, Name2, Name3\" or empty string,\n  \"date_detected\": \"YYYY-MM-DD\" or empty string,\n  \"summary\": \"1-2 sentence summary of the meeting\",\n  \"action_items\": [\"item1\", \"item2\"] or empty array,\n  \"key_topics\": [\"topic1\", \"topic2\"] or empty array,\n  \"correct_folder\": \"Work/Areas/One on One Meetings/{person}/\" or \"Work/Projects/Active Deals/Clients/{location}/{client}/\" or \"Work/Projects/Active Deals/Partners/{partner}/\" or \"Work/Areas/Expedient Teams/{team}/\" or empty string,\n  \"confidence\": \"high|medium|low\",\n  \"confidence_reason\": \"Brief explanation of confidence level\",\n  \"needs_manual_review\": false,\n  \"review_reason\": \"\" or explanation if review needed\n}\n\n=== CLASSIFICATION RULES ===\n1. 1on1: Meeting with one person from Expedient team (see list below)\n2. Customer: Meeting with external client company\n3. Partner: Meeting with partner/vendor company\n4. Internal: Team meeting with multiple Expedient people\n5. Unknown: Cannot determine (be conservative - if unsure, use this)\n\n=== FOLDER ROUTING ===\n- 1on1 → Work/Areas/One on One Meetings/{person}/\n- Customer → Work/Projects/Active Deals/Clients/{location}/{client}/\n- Partner → Work/Projects/Active Deals/Partners/{partner}/\n- Internal → Work/Areas/Expedient Teams/{team}/\n- Unknown → needs_manual_review: true\n\n=== EXPEDIENT TEAM MEMBERS ===\nManager: Rob McCafferty\nDirect Reports: David Determan, Patrick Rosenberger, Keith Cadieux\nTeam: Ben Gallo, Brian Lacombe, Chad St. Thomas, David Saliba, Jacob Figueroa, Jason Molitor, Aaron Littlejohn, Jeff Fertitta, Anthony Jackman, Duane Weber, Bob Carter, Kate Rance\n\n=== KNOWN CLIENTS BY LOCATION ===\nBoston: AAA, Bluestone Bank, Chase Corp, City Brewing, DFCU, Element Fleet Management, Fiduciary Trust, Flower City, GW&K, Hawkes Learning, Logitech, Medwiz, Metropolitan Opera, Phia, St. Mary's Bank, Tricon, U Mass Med, United Way CT\nDenver: AGC Bio, City and County of Denver, DMSi, Pursuit Collective\nMilwaukee: Arhaus, Aspirus, Badger Color, BDO, Duly Healthcare, Falcon Plastics, ITASKA, Medline, Messer Cutting, The Mutual Group\nIndianapolis: Aces Power, Byrider, FCFCU, Ford Meter Box, Graham Packaging, Heartland Dental, Indiana Interactive, Ivy Tech, KELMAR, Republic Airways, Rural King\nCincinnati: MCC Label, US Urology\nPhoenix: Brinks Home Security, City of Avondale, Conagra Brands, Moxa, New England Health Plan, PacketWatch, Sonora Quest, Test Equity, Thryv, Tractor Supply\nLouisville: Lifespring\n\n=== CONFIDENCE GUIDELINES ===\n- HIGH: Clear meeting type, identifiable people/companies, obvious location\n- MEDIUM: Most info present but some ambiguity\n- LOW: Missing key information or unclear classification\n\n=== IMPORTANT ===\n- Extract information from the CONTENT, not just frontmatter\n- If content is empty or very short, set needs_manual_review: true\n- Be confident when information is clear\n- Only use \"unknown\" if truly cannot determine\n\nReturn ONLY the JSON object, nothing else.",
-              "type": "string"
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         },
         "options": {}
       },
-      "id": "43ffdff6-7c47-4d69-a488-5a26df1010c0",
-      "name": "Build LLM Prompt",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.3,
+      "id": "skip-already-processed",
+      "name": "Skip Already Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
       "position": [
-        -3440,
+        -3008,
         592
       ]
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "try {\n  // Get original data from Build LLM Prompt node (preserved in input)\n  // The Set node preserves all input fields, so $input.item.json should have everything\n  // Extract LLM response first (it's in $json.content as a string)\n  let originalData = {};\n  \n  // Try to get original data from input - Set node preserves all fields\n  // In runOnceForEachItem mode, we can only use $input.item.json, not $input.all()\n  if ($input && $input.item && $input.item.json) {\n    originalData = { ...$input.item.json };\n  } else if ($json && ($json.filepath || $json.relative_path || $json.frontmatter)) {\n    // Last resort: use $json but exclude LLM response fields\n    const { content, output, text, response, message, ...rest } = $json;\n    originalData = rest;\n  }\n  \n  // Handle Anthropic node response format\n  let llmOutput = '';\n  \n  // n8n Anthropic node typically returns: { output: \"...\" } or { text: \"...\" } or direct text\n  if ($json.output) {\n    llmOutput = $json.output;\n  } else if ($json.text) {\n    llmOutput = $json.text;\n  } else if ($json.content) {\n    // Handle array format: { content: [{ type: \"text\", text: \"...\" }] }\n    if (Array.isArray($json.content)) {\n      const textContent = $json.content.find(c => c.type === 'text');\n      if (textContent && textContent.text) {\n        llmOutput = textContent.text;\n      }\n    } else if (typeof $json.content === 'string') {\n      llmOutput = $json.content;\n    }\n  } else if ($json.response) {\n    llmOutput = $json.response;\n  } else if ($json.message) {\n    llmOutput = $json.message.content || $json.message.text || '';\n  } else if (typeof $json === 'string') {\n    llmOutput = $json;\n  } else {\n    // Try to find any text field\n    llmOutput = JSON.stringify($json);\n  }\n  \n  if (!llmOutput || llmOutput.trim() === '') {\n    return {\n      json: {\n        ...originalData,\n        analysis: {\n          meeting_type: 'unknown',\n          confidence: 'low',\n          needs_manual_review: true,\n          error: 'Empty LLM response'\n        },\n        needs_update: false,\n        needs_move: false\n      }\n    };\n  }\n  \n  // Clean up response - remove markdown code blocks if present\n  let cleaned = llmOutput.trim();\n  cleaned = cleaned.replace(/^```json\\n?/i, '');\n  cleaned = cleaned.replace(/^```\\n?/i, '');\n  cleaned = cleaned.replace(/\\n?```$/i, '');\n  cleaned = cleaned.trim();\n  \n  // Try to extract JSON from response\n  let analysis;\n  try {\n    analysis = JSON.parse(cleaned);\n  } catch (e) {\n    // Try to find JSON object in the text\n    const jsonMatch = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      try {\n        analysis = JSON.parse(jsonMatch[0]);\n      } catch (e2) {\n        return {\n          json: {\n            ...originalData,\n            analysis: {\n              meeting_type: 'unknown',\n              confidence: 'low',\n              needs_manual_review: true,\n              error: 'Failed to parse LLM JSON response',\n              raw_output: cleaned.substring(0, 500)\n            },\n            needs_update: false,\n            needs_move: false\n          }\n        };\n      }\n    } else {\n      return {\n        json: {\n          ...originalData,\n          analysis: {\n            meeting_type: 'unknown',\n            confidence: 'low',\n            needs_manual_review: true,\n            error: 'No JSON found in LLM response',\n            raw_output: cleaned.substring(0, 500)\n          },\n          needs_update: false,\n          needs_move: false\n        }\n      };\n    }\n  }\n  \n  // Validate required fields\n  if (!analysis.meeting_type) {\n    analysis.meeting_type = 'unknown';\n  }\n  if (!analysis.confidence) {\n    analysis.confidence = 'low';\n  }\n  if (analysis.needs_manual_review === undefined) {\n    analysis.needs_manual_review = analysis.confidence === 'low' || !analysis.correct_folder;\n  }\n  \n  // Ensure new optional fields have defaults if missing\n  if (!analysis.confidence_reason) {\n    analysis.confidence_reason = '';\n  }\n  if (!analysis.review_reason) {\n    analysis.review_reason = '';\n  }\n  if (!analysis.date_detected) {\n    analysis.date_detected = '';\n  }\n  if (!analysis.partner) {\n    analysis.partner = '';\n  }\n  if (!analysis.team) {\n    analysis.team = '';\n  }\n  \n  // Calculate if file needs moving\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  // Safely get current relative path with null checks\n  let currentRelative = originalData.relative_path || '';\n  if (!currentRelative && originalData.filepath && typeof originalData.filepath === 'string') {\n    currentRelative = originalData.filepath.replace(vaultRoot + '/', '');\n  }\n  const targetRelative = analysis.correct_folder || '';\n  \n  // Normalize paths for comparison (remove trailing slashes)\n  const normalizedCurrent = (currentRelative || '').replace(/\\/$/, '');\n  const normalizedTarget = (targetRelative || '').replace(/\\/$/, '');\n  const currentDir = normalizedCurrent ? normalizedCurrent.substring(0, normalizedCurrent.lastIndexOf('/')) : '';\n  \n  // Only calculate move if we have both current and target paths\n  const needsMove = targetRelative && \n                    targetRelative.trim() !== '' && \n                    normalizedCurrent && \n                    normalizedCurrent.trim() !== '' &&\n                    currentDir !== normalizedTarget &&\n                    !normalizedCurrent.startsWith(normalizedTarget + '/');\n  \n  // Ensure we have at least minimal originalData structure\n  const resultData = {\n    filepath: originalData.filepath || '',\n    filename: originalData.filename || '',\n    current_folder: originalData.current_folder || '',\n    relative_path: originalData.relative_path || currentRelative || '',\n    frontmatter: originalData.frontmatter || {},\n    content: originalData.content || '',\n    has_frontmatter: originalData.has_frontmatter || false,\n    ...originalData\n  };\n  \n  return {\n    json: {\n      ...resultData,\n      analysis,\n      needs_update: !analysis.needs_manual_review,\n      needs_move: needsMove\n    }\n  };\n} catch (error) {\n  // Fallback: try to get original data from input or use current json\n  const fallbackData = $input.item?.json || $json || {};\n  return {\n    json: {\n      ...fallbackData,\n      analysis: {\n        meeting_type: 'unknown',\n        confidence: 'low',\n        needs_manual_review: true,\n        error: error.message\n      },\n      needs_update: false,\n      needs_move: false\n    }\n  };\n}"
+        "jsCode": "// Build dynamic LLM prompt using discovered structure context\nconst data = $json;\nconst ctx = data.structure_context || {};\n\n// Build dynamic lists from discovered context\nconst teamMembers = (ctx.team_members || []).join(', ') || 'No team members discovered';\nconst locations = (ctx.locations || []).join(', ') || 'No locations discovered';\nconst partners = (ctx.partners || []).join(', ') || 'No partners discovered';\nconst teams = (ctx.teams || []).join(', ') || 'No teams discovered';\n\n// Build clients by location string\nlet clientsByLocation = '';\nif (ctx.clients_by_location && Object.keys(ctx.clients_by_location).length > 0) {\n  clientsByLocation = Object.entries(ctx.clients_by_location)\n    .map(([loc, clients]) => `${loc}: ${clients.join(', ')}`)\n    .join('\\n');\n} else {\n  clientsByLocation = 'No clients discovered';\n}\n\n// Build folder patterns string\nlet folderPatterns = '';\nif (ctx.folder_patterns) {\n  folderPatterns = Object.entries(ctx.folder_patterns)\n    .map(([type, pattern]) => `- ${type} → ${pattern}`)\n    .join('\\n');\n} else {\n  folderPatterns = `- 1on1 → Work/Areas/One on One Meetings/{person}/\n- customer → Work/Projects/Active Deals/Clients/{location}/{client}/\n- partner → Work/Projects/Active Deals/Partners/{partner}/\n- internal → Work/Areas/Expedient Teams/{team}/`;\n}\n\nconst prompt = `Analyze this Obsidian meeting note and extract metadata. Be confident - only mark for manual review if truly uncertain.\n\n=== FILE INFORMATION ===\nFile Path: ${data.relative_path || data.filepath}\nExisting Frontmatter:\n${JSON.stringify(data.frontmatter, null, 2)}\n\n=== NOTE CONTENT ===\n${data.content}\n\n=== TASK ===\nClassify the meeting type, extract metadata, and determine the correct folder location based on the discovered vault structure.\n\n=== OUTPUT FORMAT ===\nReturn ONLY valid JSON (no markdown, no code blocks, no explanation). Use this exact structure:\n\n{\n  \"meeting_type\": \"1on1|customer|partner|internal|unknown\",\n  \"person\": \"Full Name\" or empty string,\n  \"client\": \"Company Name\" or empty string,\n  \"partner\": \"Partner Name\" or empty string,\n  \"team\": \"Team Name\" or empty string,\n  \"location\": \"Location Name\" or empty string,\n  \"attendees\": \"Name1, Name2, Name3\" or empty string,\n  \"date_detected\": \"YYYY-MM-DD\" or empty string,\n  \"summary\": \"1-2 sentence summary of the meeting\",\n  \"action_items\": [\"item1\", \"item2\"] or empty array,\n  \"key_topics\": [\"topic1\", \"topic2\"] or empty array,\n  \"correct_folder\": \"Use one of the folder patterns below with values filled in\" or empty string,\n  \"confidence\": \"high|medium|low\",\n  \"confidence_reason\": \"Brief explanation of confidence level\",\n  \"needs_manual_review\": false,\n  \"review_reason\": \"\" or explanation if review needed\n}\n\n=== CLASSIFICATION RULES ===\n1. 1on1: Meeting with one person from the team (see list below)\n2. Customer: Meeting with external client company\n3. Partner: Meeting with partner/vendor company\n4. Internal: Team meeting with multiple internal people\n5. Unknown: Cannot determine (be conservative - if unsure, use this)\n\n=== DISCOVERED FOLDER PATTERNS ===\n${folderPatterns}\n\n=== DISCOVERED TEAM MEMBERS ===\n${teamMembers}\n\n=== DISCOVERED CLIENTS BY LOCATION ===\n${clientsByLocation}\n\n=== DISCOVERED PARTNERS ===\n${partners}\n\n=== DISCOVERED TEAMS ===\n${teams}\n\n=== AVAILABLE LOCATIONS ===\n${locations}\n\n=== CLASSIFICATION GUIDANCE ===\n${ctx.classification_guidance || 'Classify based on attendees mentioned in the note content and match to discovered entities.'}\n\n=== CONFIDENCE GUIDELINES ===\n- HIGH: Clear meeting type, identifiable people/companies from discovered lists\n- MEDIUM: Most info present but some ambiguity or entity not in discovered lists\n- LOW: Missing key information or unclear classification\n\n=== IMPORTANT ===\n- Extract information from the CONTENT, not just frontmatter\n- If content is empty or very short, set needs_manual_review: true\n- Be confident when information is clear\n- If a person/company is not in the discovered lists, still classify if confident\n- Only use \"unknown\" if truly cannot determine\n\nReturn ONLY the JSON object, nothing else.`;\n\nreturn {\n  json: {\n    ...data,\n    prompt: prompt\n  }\n};"
+      },
+      "id": "43ffdff6-7c47-4d69-a488-5a26df1010c0",
+      "name": "Build LLM Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2800,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "try {\n  // Get original data from Build LLM Prompt node\n  // The Ollama node doesn't preserve input data, so we access Build LLM Prompt directly\n  let originalData = {};\n  \n  try {\n    // In runOnceForEachItem mode, $('NodeName').item.json gets the corresponding item\n    originalData = $('Build LLM Prompt').item.json;\n  } catch (e) {\n    // Fallback: try to get from $input (unlikely to work with LLM nodes)\n    if ($input && $input.item && $input.item.json && $input.item.json.filepath) {\n      originalData = { ...$input.item.json };\n    }\n  }\n  \n  // Handle Ollama/Anthropic node response format\n  let llmOutput = '';\n  \n  // n8n Anthropic node typically returns: { output: \"...\" } or { text: \"...\" } or direct text\n  if ($json.output) {\n    llmOutput = $json.output;\n  } else if ($json.text) {\n    llmOutput = $json.text;\n  } else if ($json.content) {\n    // Handle array format: { content: [{ type: \"text\", text: \"...\" }] }\n    if (Array.isArray($json.content)) {\n      const textContent = $json.content.find(c => c.type === 'text');\n      if (textContent && textContent.text) {\n        llmOutput = textContent.text;\n      }\n    } else if (typeof $json.content === 'string') {\n      llmOutput = $json.content;\n    }\n  } else if ($json.response) {\n    llmOutput = $json.response;\n  } else if ($json.message) {\n    llmOutput = $json.message.content || $json.message.text || '';\n  } else if (typeof $json === 'string') {\n    llmOutput = $json;\n  } else {\n    // Try to find any text field\n    llmOutput = JSON.stringify($json);\n  }\n  \n  if (!llmOutput || llmOutput.trim() === '') {\n    return {\n      json: {\n        ...originalData,\n        analysis: {\n          meeting_type: 'unknown',\n          confidence: 'low',\n          needs_manual_review: true,\n          error: 'Empty LLM response'\n        },\n        needs_update: false,\n        needs_move: false\n      }\n    };\n  }\n  \n  // Clean up response - remove markdown code blocks if present\n  let cleaned = llmOutput.trim();\n  cleaned = cleaned.replace(/^```json\\n?/i, '');\n  cleaned = cleaned.replace(/^```\\n?/i, '');\n  cleaned = cleaned.replace(/\\n?```$/i, '');\n  cleaned = cleaned.trim();\n  \n  // Try to extract JSON from response\n  let analysis;\n  try {\n    analysis = JSON.parse(cleaned);\n  } catch (e) {\n    // Try to find JSON object in the text\n    const jsonMatch = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      try {\n        analysis = JSON.parse(jsonMatch[0]);\n      } catch (e2) {\n        return {\n          json: {\n            ...originalData,\n            analysis: {\n              meeting_type: 'unknown',\n              confidence: 'low',\n              needs_manual_review: true,\n              error: 'Failed to parse LLM JSON response',\n              raw_output: cleaned.substring(0, 500)\n            },\n            needs_update: false,\n            needs_move: false\n          }\n        };\n      }\n    } else {\n      return {\n        json: {\n          ...originalData,\n          analysis: {\n            meeting_type: 'unknown',\n            confidence: 'low',\n            needs_manual_review: true,\n            error: 'No JSON found in LLM response',\n            raw_output: cleaned.substring(0, 500)\n          },\n          needs_update: false,\n          needs_move: false\n        }\n      };\n    }\n  }\n  \n  // Validate required fields\n  if (!analysis.meeting_type) {\n    analysis.meeting_type = 'unknown';\n  }\n  if (!analysis.confidence) {\n    analysis.confidence = 'low';\n  }\n  if (analysis.needs_manual_review === undefined) {\n    analysis.needs_manual_review = analysis.confidence === 'low' || !analysis.correct_folder;\n  }\n  \n  // Ensure new optional fields have defaults if missing\n  if (!analysis.confidence_reason) {\n    analysis.confidence_reason = '';\n  }\n  if (!analysis.review_reason) {\n    analysis.review_reason = '';\n  }\n  if (!analysis.date_detected) {\n    analysis.date_detected = '';\n  }\n  if (!analysis.partner) {\n    analysis.partner = '';\n  }\n  if (!analysis.team) {\n    analysis.team = '';\n  }\n  \n  // Calculate if file needs moving\n  const vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\n  // Safely get current relative path with null checks\n  let currentRelative = originalData.relative_path || '';\n  if (!currentRelative && originalData.filepath && typeof originalData.filepath === 'string') {\n    currentRelative = originalData.filepath.replace(vaultRoot + '/', '');\n  }\n  const targetRelative = analysis.correct_folder || '';\n  \n  // Normalize paths for comparison (remove trailing slashes)\n  const normalizedCurrent = (currentRelative || '').replace(/\\/$/, '');\n  const normalizedTarget = (targetRelative || '').replace(/\\/$/, '');\n  const currentDir = normalizedCurrent ? normalizedCurrent.substring(0, normalizedCurrent.lastIndexOf('/')) : '';\n  \n  // Only calculate move if we have both current and target paths\n  const needsMove = targetRelative && \n                    targetRelative.trim() !== '' && \n                    normalizedCurrent && \n                    normalizedCurrent.trim() !== '' &&\n                    currentDir !== normalizedTarget &&\n                    !normalizedCurrent.startsWith(normalizedTarget + '/');\n  \n  // Ensure we have at least minimal originalData structure\n  const resultData = {\n    filepath: originalData.filepath || '',\n    filename: originalData.filename || '',\n    current_folder: originalData.current_folder || '',\n    relative_path: originalData.relative_path || currentRelative || '',\n    frontmatter: originalData.frontmatter || {},\n    content: originalData.content || '',\n    has_frontmatter: originalData.has_frontmatter || false,\n    ...originalData\n  };\n  \n  return {\n    json: {\n      ...resultData,\n      analysis,\n      needs_update: !analysis.needs_manual_review,\n      needs_move: needsMove\n    }\n  };\n} catch (error) {\n  // Fallback: try to get original data from Build LLM Prompt\n  let fallbackData = {};\n  try {\n    fallbackData = $('Build LLM Prompt').item.json;\n  } catch (e) {\n    // If all else fails, use empty object\n    fallbackData = {};\n  }\n  return {\n    json: {\n      ...fallbackData,\n      analysis: {\n        meeting_type: 'unknown',\n        confidence: 'low',\n        needs_manual_review: true,\n        error: error.message\n      },\n      needs_update: false,\n      needs_move: false\n    }\n  };\n}"
       },
       "id": "a85fb14b-5c45-471d-ae02-c7c9bfd8fb39",
       "name": "Parse LLM Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -2624,
+        -2176,
         592
       ]
     },
@@ -177,29 +292,30 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        -2416,
+        -1968,
         592
       ]
     },
     {
       "parameters": {
-        "jsCode": "try {\n  const data = $json;\n  const fm = data.frontmatter || {};\n  const analysis = data.analysis || {};\n  \n  // Build updated frontmatter\n  const updated = {\n    date: analysis.date_detected || fm.date || new Date().toISOString().split('T')[0],\n    type: 'meeting',\n    meeting_type: analysis.meeting_type || 'unknown',\n    person: analysis.person || '',\n    client: analysis.client || '',\n    location: analysis.location || '',\n    partner: analysis.partner || '',\n    team: analysis.team || '',\n    attendees: analysis.attendees || '',\n    summary: analysis.summary || '',\n    project: fm.project || 'unclassified',\n    status: 'processed'\n  };\n  \n  // Remove empty fields\n  Object.keys(updated).forEach(key => {\n    if (updated[key] === '') {\n      delete updated[key];\n    }\n  });\n  \n  // Build new frontmatter block\n  const fmLines = Object.entries(updated)\n    .map(([k, v]) => {\n      // Escape colons in values if needed\n      const value = typeof v === 'string' && v.includes(':') ? `\"${v}\"` : v;\n      return `${k}: ${value}`;\n    })\n    .join('\\n');\n  \n  const newFrontmatter = `---\\n${fmLines}\\n---`;\n  \n  // Replace old frontmatter in content or add if missing\n  let newContent = data.content || '';\n  if (newContent.match(/^---\\n[\\s\\S]*?\\n---/)) {\n    newContent = newContent.replace(/^---[\\s\\S]*?---/, newFrontmatter);\n  } else {\n    newContent = newFrontmatter + '\\n\\n' + newContent;\n  }\n  \n  // Add action items if not present\n  if (analysis.action_items && Array.isArray(analysis.action_items) && analysis.action_items.length > 0) {\n    if (!newContent.includes('## Action Items')) {\n      const items = analysis.action_items.map(item => `- [ ] ${item}`).join('\\n');\n      newContent += `\\n\\n## Action Items\\n${items}`;\n    }\n  }\n  \n  // Add key topics if not present\n  if (analysis.key_topics && Array.isArray(analysis.key_topics) && analysis.key_topics.length > 0) {\n    if (!newContent.includes('## Key Topics')) {\n      const topics = analysis.key_topics.map(t => `- ${t}`).join('\\n');\n      newContent += `\\n\\n## Key Topics\\n${topics}`;\n    }\n  }\n  \n  return {\n    json: {\n      ...data,\n      updated_content: newContent\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      ...$json,\n      updated_content: $json.content || '',\n      error: error.message\n    }\n  };\n}"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Get data from Parse LLM Response (IF node doesn't always preserve all fields)\nlet data = {};\ntry {\n  data = $('Parse LLM Response').item.json;\n} catch (e) {\n  data = $json || {};\n}\n\nconst fm = data.frontmatter || {};\nconst analysis = data.analysis || {};\n\n// Build updated frontmatter\nconst updated = {\n  date: analysis.date_detected || fm.date || new Date().toISOString().split('T')[0],\n  type: 'meeting',\n  meeting_type: analysis.meeting_type || 'unknown',\n  person: analysis.person || '',\n  client: analysis.client || '',\n  location: analysis.location || '',\n  partner: analysis.partner || '',\n  team: analysis.team || '',\n  attendees: analysis.attendees || '',\n  summary: analysis.summary || '',\n  project: fm.project || 'unclassified',\n  status: 'processed'\n};\n\n// Remove empty fields\nObject.keys(updated).forEach(key => {\n  if (updated[key] === '') {\n    delete updated[key];\n  }\n});\n\n// Build new frontmatter block\nconst fmLines = Object.entries(updated)\n  .map(([k, v]) => {\n    const value = typeof v === 'string' && v.includes(':') ? `\\\"${v}\\\"` : v;\n    return `${k}: ${value}`;\n  })\n  .join('\\n');\n\nconst newFrontmatter = `---\\n${fmLines}\\n---`;\n\n// Replace old frontmatter in content or add if missing\nlet newContent = data.content || '';\nif (newContent.match(/^---\\n[\\s\\S]*?\\n---/)) {\n  newContent = newContent.replace(/^---[\\s\\S]*?---/, newFrontmatter);\n} else {\n  newContent = newFrontmatter + '\\n\\n' + newContent;\n}\n\n// Add action items if not present\nif (analysis.action_items && Array.isArray(analysis.action_items) && analysis.action_items.length > 0) {\n  if (!newContent.includes('## Action Items')) {\n    const items = analysis.action_items.map(item => `- [ ] ${item}`).join('\\n');\n    newContent += `\\n\\n## Action Items\\n${items}`;\n  }\n}\n\n// Add key topics if not present\nif (analysis.key_topics && Array.isArray(analysis.key_topics) && analysis.key_topics.length > 0) {\n  if (!newContent.includes('## Key Topics')) {\n    const topics = analysis.key_topics.map(t => `- ${t}`).join('\\n');\n    newContent += `\\n\\n## Key Topics\\n${topics}`;\n  }\n}\n\nreturn {\n  json: {\n    filepath: data.filepath || '',\n    filename: data.filename || '',\n    current_folder: data.current_folder || '',\n    relative_path: data.relative_path || '',\n    updated_content: newContent,\n    analysis: analysis,\n    needs_move: data.needs_move || false,\n    error: data.error || ''\n  }\n};"
       },
       "id": "a94d9800-989d-433f-a0da-560f72d57de3",
       "name": "Update Frontmatter",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -2224,
+        -1776,
         496
       ]
     },
     {
       "parameters": {
         "method": "PUT",
-        "url": "=http://100.111.39.118:27123/vault/{{ encodeURIComponent($json.relative_path || $json.filepath.replace('/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/', '')) }}",
+        "url": "=http://100.111.39.118:27123/vault/{{ $json.relative_path || $json.filepath.replace('/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/', '') }}",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -216,13 +332,13 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -2016,
+        -1568,
         496
       ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "GLdl8kauGGZ3sdXZ",
-          "name": "Header Auth account"
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
         }
       },
       "continueOnFail": true
@@ -255,25 +371,27 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        -1824,
+        -1376,
         496
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Folders will be created automatically when files are written to them\n// This is a no-op node to maintain workflow structure\nreturn $input.all();"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Folders will be created automatically when files are written to them\n// This is a no-op node to maintain workflow structure\n// Process each item individually (runOnceForEachItem mode)\nreturn [{ json: $json }];"
       },
       "id": "0810191c-a2ad-4052-95e3-e7c6da776b60",
       "name": "Create Target Folder",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1616,
+        -1168,
         384
       ]
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
         "jsCode": "// Prepare file move operation\n// The actual move will be done by writing to new location and deleting old\nconst data = $json;\nconst vaultRoot = '/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1';\nconst oldRelativePath = data.relative_path || data.filepath.replace(vaultRoot + '/', '');\nconst newFolder = data.analysis.correct_folder.replace(/\\/$/, '');\nconst newRelativePath = `${newFolder}/${data.filename}`;\n\nreturn {\n  json: {\n    ...data,\n    old_relative_path: oldRelativePath,\n    new_relative_path: newRelativePath,\n    move_content: data.updated_content || data.content\n  }\n};"
       },
       "id": "85e400b6-d4c3-4918-8f4b-6e7a438ce89c",
@@ -281,16 +399,16 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1424,
+        -976,
         384
       ]
     },
     {
       "parameters": {
         "method": "PUT",
-        "url": "=http://100.111.39.118:27123/vault/{{ encodeURIComponent($json.new_relative_path) }}",
+        "url": "=http://100.111.39.118:27123/vault/{{ $json.new_relative_path }}",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -307,13 +425,13 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -1216,
+        -768,
         384
       ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "GLdl8kauGGZ3sdXZ",
-          "name": "Header Auth account"
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
         }
       },
       "continueOnFail": true
@@ -321,9 +439,9 @@
     {
       "parameters": {
         "method": "DELETE",
-        "url": "=http://100.111.39.118:27123/vault/{{ encodeURIComponent($json.old_relative_path) }}",
+        "url": "=http://100.111.39.118:27123/vault/{{ $json.old_relative_path }}",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "options": {}
       },
       "id": "694c191d-f09b-4245-98fd-6995c06a66ca",
@@ -331,36 +449,37 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -1024,
+        -576,
         384
       ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "GLdl8kauGGZ3sdXZ",
-          "name": "Header Auth account"
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
         }
       },
       "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "try {\n  const data = $json;\n  const fm = data.frontmatter || {};\n  \n  // Build frontmatter with needs-manual-review status\n  const updated = {\n    ...fm,\n    date: fm.date || new Date().toISOString().split('T')[0],\n    type: 'meeting',\n    status: 'needs-manual-review'\n  };\n  \n  // Add or update tags\n  const existingTags = fm.tags || '';\n  const needsReviewTag = '#needs-manual-review';\n  let tags = existingTags;\n  if (!tags.includes(needsReviewTag)) {\n    tags = tags ? `${tags} ${needsReviewTag}` : needsReviewTag;\n  }\n  updated.tags = tags;\n  \n  // Build new frontmatter block\n  const fmLines = Object.entries(updated)\n    .map(([k, v]) => {\n      const value = typeof v === 'string' && v.includes(':') ? `\"${v}\"` : v;\n      return `${k}: ${value}`;\n    })\n    .join('\\n');\n  \n  const newFrontmatter = `---\\n${fmLines}\\n---`;\n  \n  // Replace old frontmatter or add if missing\n  let newContent = data.content || '';\n  if (newContent.match(/^---\\n[\\s\\S]*?\\n---/)) {\n    newContent = newContent.replace(/^---[\\s\\S]*?---/, newFrontmatter);\n  } else {\n    newContent = newFrontmatter + '\\n\\n' + newContent;\n  }\n  \n  return {\n    json: {\n      ...data,\n      updated_content: newContent\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      ...$json,\n      updated_content: $json.content || '',\n      error: error.message\n    }\n  };\n}"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Get data from Parse LLM Response (IF node doesn't always preserve all fields)\nlet data = {};\ntry {\n  data = $('Parse LLM Response').item.json;\n} catch (e) {\n  data = $json || {};\n}\n\nconst fm = data.frontmatter || {};\n\n// Build frontmatter with needs-manual-review status\nconst updated = {\n  ...fm,\n  date: fm.date || new Date().toISOString().split('T')[0],\n  type: 'meeting',\n  status: 'needs-manual-review'\n};\n\n// Add or update tags\nconst existingTags = fm.tags || '';\nconst needsReviewTag = '#needs-manual-review';\nlet tags = existingTags;\nif (!tags.includes(needsReviewTag)) {\n  tags = tags ? `${tags} ${needsReviewTag}` : needsReviewTag;\n}\nupdated.tags = tags;\n\n// Build new frontmatter block\nconst fmLines = Object.entries(updated)\n  .map(([k, v]) => {\n    const value = typeof v === 'string' && v.includes(':') ? `\\\"${v}\\\"` : v;\n    return `${k}: ${value}`;\n  })\n  .join('\\n');\n\nconst newFrontmatter = `---\\n${fmLines}\\n---`;\n\n// Replace old frontmatter or add if missing\nlet newContent = data.content || '';\nif (newContent.match(/^---\\n[\\s\\S]*?\\n---/)) {\n  newContent = newContent.replace(/^---[\\s\\S]*?---/, newFrontmatter);\n} else {\n  newContent = newFrontmatter + '\\n\\n' + newContent;\n}\n\nreturn {\n  json: {\n    filepath: data.filepath || '',\n    filename: data.filename || '',\n    current_folder: data.current_folder || '',\n    relative_path: data.relative_path || '',\n    updated_content: newContent,\n    analysis: data.analysis || {},\n    error: data.error || ''\n  }\n};"
       },
       "id": "d46b4fa9-11aa-49fa-9558-a90522c42992",
       "name": "Tag for Manual Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -2224,
+        -1776,
         688
       ]
     },
     {
       "parameters": {
         "method": "PUT",
-        "url": "=http://100.111.39.118:27123/vault/{{ encodeURIComponent($json.relative_path || $json.filepath.replace('/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/', '')) }}",
+        "url": "=http://100.111.39.118:27123/vault/{{ $json.relative_path || $json.filepath.replace('/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/', '') }}",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -377,13 +496,13 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -2016,
+        -1568,
         688
       ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "GLdl8kauGGZ3sdXZ",
-          "name": "Header Auth account"
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
         }
       },
       "continueOnFail": true
@@ -395,29 +514,29 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 2.1,
       "position": [
-        -1216,
+        -768,
         592
       ]
     },
     {
       "parameters": {
-        "jsCode": "try {\n  const items = $input.all();\n  const timestamp = new Date().toISOString();\n  const date = timestamp.split('T')[0];\n  \n  // Filter out skipped items\n  const processedItems = items.filter(i => !i.json.skip);\n  \n  const stats = {\n    total: processedItems.length,\n    updated: processedItems.filter(i => i.json.needs_update && !i.json.error).length,\n    moved: processedItems.filter(i => i.json.needs_move && !i.json.error).length,\n    needs_review: processedItems.filter(i => i.json.analysis?.needs_manual_review || i.json.error).length,\n    errors: processedItems.filter(i => i.json.error).length\n  };\n  \n  const reviewFiles = processedItems\n    .filter(i => i.json.analysis?.needs_manual_review || i.json.error)\n    .map(i => ({\n      filename: i.json.filename,\n      confidence: i.json.analysis?.confidence || 'unknown',\n      error: i.json.error\n    }));\n  \n  const movedFiles = processedItems\n    .filter(i => i.json.needs_move && !i.json.error)\n    .map(i => ({\n      filename: i.json.filename,\n      from: i.json.current_folder,\n      to: i.json.analysis?.correct_folder || 'unknown'\n    }));\n  \n  const errorFiles = processedItems\n    .filter(i => i.json.error)\n    .map(i => ({\n      filename: i.json.filename,\n      error: i.json.error\n    }));\n  \n  let log = `# Vault Janitor Log - ${timestamp}\\n\\n## Summary\\n`;\n  log += `- **Total files processed:** ${stats.total}\\n`;\n  log += `- **Metadata updated:** ${stats.updated}\\n`;\n  log += `- **Files moved:** ${stats.moved}\\n`;\n  log += `- **Needs manual review:** ${stats.needs_review}\\n`;\n  if (stats.errors > 0) {\n    log += `- **Errors:** ${stats.errors}\\n`;\n  }\n  \n  log += `\\n## Files Needing Review\\n`;\n  if (reviewFiles.length > 0) {\n    reviewFiles.forEach(file => {\n      log += `- [[${file.filename}]] - ${file.confidence} confidence`;\n      if (file.error) {\n        log += ` (Error: ${file.error})`;\n      }\n      log += '\\n';\n    });\n  } else {\n    log += `None\\n`;\n  }\n  \n  log += `\\n## Files Moved\\n`;\n  if (movedFiles.length > 0) {\n    movedFiles.forEach(file => {\n      log += `- [[${file.filename}]] → ${file.to}\\n`;\n    });\n  } else {\n    log += `None\\n`;\n  }\n  \n  if (errorFiles.length > 0) {\n    log += `\\n## Errors\\n`;\n    errorFiles.forEach(file => {\n      log += `- [[${file.filename}]] - ${file.error}\\n`;\n    });\n  }\n  \n  return {\n    json: {\n      log_content: log,\n      log_path: `/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/Work/00-Inbox/Janitor-Log-${date}.md`,\n      stats: stats\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      log_content: `# Vault Janitor Log - ${new Date().toISOString()}\\n\\nError generating log: ${error.message}\\n`,\n      log_path: `/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/Work/00-Inbox/Janitor-Log-${new Date().toISOString().split('T')[0]}.md`,\n      stats: { total: 0, updated: 0, moved: 0, needs_review: 0, errors: 1 }\n    }\n  };\n}"
+        "jsCode": "try {\n  // Get all items - this node processes all items at once to build summary\n  // Ensure we get all items from input\n  let items;\n  try {\n    items = $input.all();\n  } catch (e) {\n    // Fallback if .all() not available - should not happen in default mode\n    items = $input.item ? [$input.item] : [{ json: $json }];\n  }\n  \n  // Ensure items is an array\n  if (!Array.isArray(items)) {\n    items = items ? [items] : [];\n  }\n  \n  const timestamp = new Date().toISOString();\n  const date = timestamp.split('T')[0];\n  \n  // Filter out skipped items\n  const processedItems = items.filter(i => i && i.json && !i.json.skip);\n  \n  const stats = {\n    total: processedItems.length,\n    updated: processedItems.filter(i => i.json.needs_update && !i.json.error).length,\n    moved: processedItems.filter(i => i.json.needs_move && !i.json.error).length,\n    needs_review: processedItems.filter(i => i.json.analysis?.needs_manual_review || i.json.error).length,\n    errors: processedItems.filter(i => i.json.error).length\n  };\n  \n  const reviewFiles = processedItems\n    .filter(i => i.json.analysis?.needs_manual_review || i.json.error)\n    .map(i => ({\n      filename: i.json.filename,\n      confidence: i.json.analysis?.confidence || 'unknown',\n      error: i.json.error\n    }));\n  \n  const movedFiles = processedItems\n    .filter(i => i.json.needs_move && !i.json.error)\n    .map(i => ({\n      filename: i.json.filename,\n      from: i.json.current_folder,\n      to: i.json.analysis?.correct_folder || 'unknown'\n    }));\n  \n  const errorFiles = processedItems\n    .filter(i => i.json.error)\n    .map(i => ({\n      filename: i.json.filename,\n      error: i.json.error\n    }));\n  \n  let log = `# Vault Janitor Log - ${timestamp}\\n\\n## Summary\\n`;\n  log += `- **Total files processed:** ${stats.total}\\n`;\n  log += `- **Metadata updated:** ${stats.updated}\\n`;\n  log += `- **Files moved:** ${stats.moved}\\n`;\n  log += `- **Needs manual review:** ${stats.needs_review}\\n`;\n  if (stats.errors > 0) {\n    log += `- **Errors:** ${stats.errors}\\n`;\n  }\n  \n  log += `\\n## Files Needing Review\\n`;\n  if (reviewFiles.length > 0) {\n    reviewFiles.forEach(file => {\n      log += `- [[${file.filename}]] - ${file.confidence} confidence`;\n      if (file.error) {\n        log += ` (Error: ${file.error})`;\n      }\n      log += '\\n';\n    });\n  } else {\n    log += `None\\n`;\n  }\n  \n  log += `\\n## Files Moved\\n`;\n  if (movedFiles.length > 0) {\n    movedFiles.forEach(file => {\n      log += `- [[${file.filename}]] → ${file.to}\\n`;\n    });\n  } else {\n    log += `None\\n`;\n  }\n  \n  if (errorFiles.length > 0) {\n    log += `\\n## Errors\\n`;\n    errorFiles.forEach(file => {\n      log += `- [[${file.filename}]] - ${file.error}\\n`;\n    });\n  }\n  \n  return {\n    json: {\n      log_content: log,\n      log_path: `/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/Work/00-Inbox/Janitor-Log-${date}.md`,\n      stats: stats\n    }\n  };\n} catch (error) {\n  return {\n    json: {\n      log_content: `# Vault Janitor Log - ${new Date().toISOString()}\\n\\nError generating log: ${error.message}\\n`,\n      log_path: `/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/Work/00-Inbox/Janitor-Log-${new Date().toISOString().split('T')[0]}.md`,\n      stats: { total: 0, updated: 0, moved: 0, needs_review: 0, errors: 1 }\n    }\n  };\n}"
       },
       "id": "3426c256-68e9-418c-847a-ad1f23789164",
       "name": "Build Summary Log",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1024,
+        -576,
         592
       ]
     },
     {
       "parameters": {
         "method": "PUT",
-        "url": "=http://100.111.39.118:27123/vault/{{ encodeURIComponent($json.log_path.replace('/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/', '')) }}",
+        "url": "=http://100.111.39.118:27123/vault/{{ $json.log_path.replace('/Users/joshdavis/Library/Mobile Documents/iCloud~md~obsidian/Documents/dvsobs1/', '') }}",
         "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "genericAuthType": "httpBearerAuth",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -434,13 +553,13 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -816,
+        -368,
         592
       ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "GLdl8kauGGZ3sdXZ",
-          "name": "Header Auth account"
+        "httpBearerAuth": {
+          "id": "0e6NCchfeK4TA18n",
+          "name": "Obsidian Local REST API"
         }
       },
       "continueOnFail": true
@@ -456,7 +575,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        -624,
+        -176,
         512
       ]
     },
@@ -482,11 +601,11 @@
       "type": "@n8n/n8n-nodes-langchain.ollama",
       "typeVersion": 1,
       "position": [
-        -3120,
+        -2592,
         592
       ],
       "id": "1ab32482-4cec-4adf-affa-f17b0f0736a0",
-      "name": "Message a model",
+      "name": "LLM Pass 2 - Classify Note",
       "credentials": {
         "ollamaApi": {
           "id": "UrA6yVTCmM5YHOen",
@@ -501,7 +620,7 @@
       "main": [
         [
           {
-            "node": "Find All MD Files",
+            "node": "Scan Vault Structure",
             "type": "main",
             "index": 0
           }
@@ -509,6 +628,61 @@
       ]
     },
     "Nightly Cron (2am)": {
+      "main": [
+        [
+          {
+            "node": "Scan Vault Structure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Vault Structure": {
+      "main": [
+        [
+          {
+            "node": "Read Config Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Config Note": {
+      "main": [
+        [
+          {
+            "node": "Build Pass 1 Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pass 1 Prompt": {
+      "main": [
+        [
+          {
+            "node": "LLM Pass 1 - Analyze Structure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Pass 1 - Analyze Structure": {
+      "main": [
+        [
+          {
+            "node": "Store Structure Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Structure Context": {
       "main": [
         [
           {
@@ -545,6 +719,24 @@
       "main": [
         [
           {
+            "node": "Skip Already Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Already Processed?": {
+      "main": [
+        [
+          {
+            "node": "Merge All Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Build LLM Prompt",
             "type": "main",
             "index": 0
@@ -556,7 +748,18 @@
       "main": [
         [
           {
-            "node": "Message a model",
+            "node": "LLM Pass 2 - Classify Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Pass 2 - Classify Note": {
+      "main": [
+        [
+          {
+            "node": "Parse LLM Response",
             "type": "main",
             "index": 0
           }
@@ -725,17 +928,6 @@
         [
           {
             "node": "Webhook Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Message a model": {
-      "main": [
-        [
-          {
-            "node": "Parse LLM Response",
             "type": "main",
             "index": 0
           }
